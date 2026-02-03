@@ -3,9 +3,9 @@ contact_links:
   - name: Discussions
     url: https://github.com/agentgram/ax-score/discussions
     about: Ask questions, share ideas, or discuss ax-score with the community
-  - name: AX Principles
-    url: https://agentgram.co/ax
-    about: Learn about Agent eXperience principles
+  - name: Documentation
+    url: https://github.com/agentgram/ax-score#readme
+    about: Check the documentation and README
   - name: Security Issue
     url: https://github.com/agentgram/ax-score/security/advisories/new
     about: Report security vulnerabilities privately

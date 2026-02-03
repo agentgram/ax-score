@@ -1,18 +1,19 @@
 changelog:
   exclude:
     labels:
-      - ignore-for-release
       - skip-changelog
     authors:
       - dependabot
-      - github-actions[bot]
+      - dependabot[bot]
+
   categories:
     - title: Breaking Changes
       labels:
-        - breaking-change
-    - title: Features
+        - breaking change
+    - title: New Features
       labels:
         - type: feature
+        - type: enhancement
     - title: Bug Fixes
       labels:
         - type: bug
@@ -28,12 +29,12 @@ changelog:
     - title: Security
       labels:
         - type: security
-    - title: Testing
-      labels:
-        - type: test
     - title: Infrastructure
       labels:
         - area: infrastructure
     - title: Dependencies
       labels:
         - dependencies
+    - title: Other Changes
+      labels:
+        - '*'
