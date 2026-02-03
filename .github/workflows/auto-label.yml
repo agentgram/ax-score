@@ -16,7 +16,7 @@ jobs:
 
       - name: Get changed files
         id: files
-        uses: tj-actions/changed-files@v44
+        uses: tj-actions/changed-files@v47
         with:
           json: true
 
@@ -67,7 +67,7 @@ jobs:
 
       - name: Apply labels
         if: fromJson(steps.labels.outputs.labels)[0] != null
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const labels = ${{ steps.labels.outputs.labels }};
