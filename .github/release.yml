@@ -1,0 +1,39 @@
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+      - skip-changelog
+    authors:
+      - dependabot
+      - github-actions[bot]
+  categories:
+    - title: Breaking Changes
+      labels:
+        - breaking-change
+    - title: Features
+      labels:
+        - type: feature
+    - title: Bug Fixes
+      labels:
+        - type: bug
+    - title: Documentation
+      labels:
+        - type: documentation
+    - title: Refactoring
+      labels:
+        - type: refactor
+    - title: Performance
+      labels:
+        - type: performance
+    - title: Security
+      labels:
+        - type: security
+    - title: Testing
+      labels:
+        - type: test
+    - title: Infrastructure
+      labels:
+        - area: infrastructure
+    - title: Dependencies
+      labels:
+        - dependencies

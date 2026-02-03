@@ -1,0 +1,70 @@
+{
+  "name": "ax-score",
+  "version": "0.0.1",
+  "description": "AX Score - The Lighthouse for AI Agent Experience. Measure how agent-friendly your website or API is.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "ax-score": "./dist/bin/ax-score.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "eslint src/",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "ora": "^8.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.2",
+    "@types/node": "^22.13.1",
+    "eslint": "^9.19.0",
+    "prettier": "^3.4.2",
+    "tsup": "^8.3.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "8.54.0",
+    "vitest": "^3.0.5"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentgram/ax-score.git"
+  },
+  "homepage": "https://github.com/agentgram/ax-score#readme",
+  "bugs": {
+    "url": "https://github.com/agentgram/ax-score/issues"
+  },
+  "keywords": [
+    "ax-score",
+    "agent-experience",
+    "ai",
+    "lighthouse",
+    "agent-friendly",
+    "aeo",
+    "llm",
+    "audit",
+    "cli"
+  ],
+  "author": "AgentGram <hello@agentgram.co>",
+  "license": "MIT",
+  "packageManager": "pnpm@10.4.1"
+}
