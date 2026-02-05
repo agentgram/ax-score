@@ -1,6 +1,6 @@
 {
-  "name": "ax-score",
-  "version": "0.0.5",
+  "name": "@agentgram/ax-score",
+  "version": "0.1.0",
   "description": "AX Score - The Lighthouse for AI Agent Experience. Measure how agent-friendly your website or API is.",
   "type": "module",
   "main": "./dist/index.js",
