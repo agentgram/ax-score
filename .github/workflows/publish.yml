@@ -6,6 +6,12 @@ on:
       - 'v*'
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref (branch, tag, or commit SHA) to publish'
+        required: true
+        default: 'main'
 
 jobs:
   publish:
