@@ -1,6 +1,6 @@
 # AX Score — The Lighthouse for AI Agents
 
-[![npm version](https://img.shields.io/npm/v/ax-score.svg)](https://www.npmjs.com/package/ax-score)
+[![npm version](https://img.shields.io/npm/v/@agentgram/ax-score.svg)](https://www.npmjs.com/package/@agentgram/ax-score)
 [![Build Status](https://github.com/agentgram/ax-score/workflows/CI/badge.svg)](https://github.com/agentgram/ax-score/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -11,7 +11,7 @@ AX Score is an open-source CLI tool and library that measures how "agent-friendl
 ## 🚀 Quick Demo
 
 ```bash
-$ npx ax-score https://agentgram.co
+$ npx @agentgram/ax-score https://agentgram.co
 
 Gathering data... [DONE]
 Running 24 audits... [DONE]
@@ -42,21 +42,21 @@ Top Suggestions:
 Install globally:
 
 ```bash
-npm install -g ax-score
+npm install -g @agentgram/ax-score
 ```
 
 Or run directly with npx:
 
 ```bash
-npx ax-score https://example.com
+npx @agentgram/ax-score https://example.com
 ```
 
 ### Programmatic Usage
 
 ```typescript
-import { runAudit } from "ax-score";
+import { runAudit } from '@agentgram/ax-score';
 
-const results = await runAudit("https://example.com");
+const results = await runAudit('https://example.com');
 console.log(`Score: ${results.score}`);
 ```
 
