@@ -1,9 +1,9 @@
 ---
 name: Task
 about: General task or improvement
-title: "[TASK] "
+title: '[TASK] '
 labels: task
-assignees: ""
+assignees: ''
 ---
 
 ## Task Description
@@ -19,11 +19,16 @@ assignees: ""
 - [ ] CLI
 - [ ] Gatherers
 - [ ] Audits
-- [ ] Reporter/Scoring
+- [ ] Reporter
+- [ ] Scoring
 - [ ] Configuration
 - [ ] Infrastructure
 - [ ] Documentation
 
 ## Related Issues / PRs
 
+<!-- Link any related issues or pull requests -->
+
 ## Additional Information
+
+<!-- Provide any additional information -->

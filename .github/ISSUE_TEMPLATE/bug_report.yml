@@ -1,18 +1,19 @@
 name: Bug Report
 description: Report a bug in ax-score
-labels: ["type: bug"]
+title: '[Bug]: '
+labels: ['type: bug', 'status: needs triage']
 body:
   - type: markdown
     attributes:
       value: |
-        Thank you for reporting a bug! Please fill out the form below to help us understand and fix the issue.
+        Thanks for taking the time to report a bug! Please fill out the information below to help us diagnose and fix the issue.
 
   - type: textarea
     id: description
     attributes:
       label: Bug Description
-      description: A clear and concise description of what the bug is
-      placeholder: "Describe the bug..."
+      description: A clear and concise description of what the bug is.
+      placeholder: 'When I try to..., the following happens...'
     validations:
       required: true
 
@@ -22,7 +23,7 @@ body:
       label: Steps to Reproduce
       description: Steps to reproduce the behavior
       placeholder: |
-        1. Run command...
+        1. Run `ax-score ...`
         2. With arguments...
         3. See error...
     validations:
@@ -32,8 +33,8 @@ body:
     id: expected
     attributes:
       label: Expected Behavior
-      description: What should happen instead?
-      placeholder: "Expected behavior..."
+      description: What you expected to happen
+      placeholder: 'I expected...'
     validations:
       required: true
 
@@ -41,23 +42,17 @@ body:
     id: actual
     attributes:
       label: Actual Behavior
-      description: What happens instead?
-      placeholder: "Actual behavior..."
+      description: What actually happened
+      placeholder: 'But instead...'
     validations:
       required: true
-
-  - type: textarea
-    id: error
-    attributes:
-      label: Error Output
-      description: If applicable, paste the error message or stack trace
-      render: shell
 
   - type: dropdown
     id: area
     attributes:
       label: Area
-      description: Which area of ax-score is affected?
+      description: Which part of ax-score is affected?
+      multiple: true
       options:
         - CLI
         - Gatherers
@@ -70,12 +65,25 @@ body:
     validations:
       required: true
 
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How severe is this bug?
+      options:
+        - Low - Nice to fix
+        - Medium - Should be fixed
+        - High - Important to fix soon
+        - Critical - Blocking/breaking functionality
+    validations:
+      required: false
+
   - type: input
     id: version
     attributes:
       label: ax-score Version
       description: What version of ax-score are you using?
-      placeholder: "e.g., 1.0.0"
+      placeholder: 'e.g., 1.0.0'
     validations:
       required: true
 
@@ -84,7 +92,7 @@ body:
     attributes:
       label: Node.js Version
       description: What version of Node.js are you using?
-      placeholder: "e.g., 20.0.0"
+      placeholder: 'e.g., 20.0.0'
     validations:
       required: true
 
@@ -93,19 +101,28 @@ body:
     attributes:
       label: Environment
       description: Any other relevant environment information
-      placeholder: "OS, npm/pnpm version, etc."
+      placeholder: 'OS, npm/pnpm version, etc.'
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Logs
+      description: If applicable, paste any error messages or stack traces
+      render: shell
+    validations:
+      required: false
 
   - type: textarea
     id: additional
     attributes:
       label: Additional Context
-      description: Any other context about the problem
+      description: Add any other context about the problem here
 
   - type: checkboxes
-    id: coc
+    id: terms
     attributes:
       label: Code of Conduct
       description: By submitting this issue, you agree to follow our Code of Conduct
       options:
-        - label: I agree to follow the Code of Conduct
+        - label: I agree to follow this project's Code of Conduct
           required: true
