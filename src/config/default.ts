@@ -79,4 +79,4 @@ export const DEFAULT_CATEGORIES: CategoryConfig[] = [
 ];
 
 export const DEFAULT_TIMEOUT = 30_000;
-export const VERSION = '0.0.1';
+export const VERSION = '0.3.0';
