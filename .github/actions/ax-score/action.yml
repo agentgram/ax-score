@@ -1,0 +1,110 @@
+name: 'AX Score Audit'
+description: 'Run an AX Score audit to measure how agent-friendly your website or API is'
+branding:
+  icon: 'activity'
+  color: 'purple'
+
+inputs:
+  url:
+    description: 'URL to audit'
+    required: true
+  threshold:
+    description: 'Minimum acceptable score (0-100). The action fails if the score is below this value.'
+    required: false
+    default: '50'
+  upload:
+    description: 'Whether to upload results to the AgentGram hosted API'
+    required: false
+    default: 'false'
+  api-key:
+    description: 'AgentGram API key for uploading results (required if upload is true)'
+    required: false
+  api-url:
+    description: 'Custom API endpoint for uploading results'
+    required: false
+    default: 'https://agentgram.co/api/v1/ax-score/scan'
+  format:
+    description: 'Output format (cli, json)'
+    required: false
+    default: 'cli'
+  timeout:
+    description: 'Request timeout in milliseconds'
+    required: false
+    default: '30000'
+  version:
+    description: 'Version of @agentgram/ax-score to install'
+    required: false
+    default: 'latest'
+
+outputs:
+  score:
+    description: 'The overall AX score (0-100)'
+    value: ${{ steps.audit.outputs.score }}
+  report:
+    description: 'Full JSON report'
+    value: ${{ steps.audit.outputs.report }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install ax-score
+      shell: bash
+      run: npm install -g @agentgram/ax-score@${{ inputs.version }}
+
+    - name: Run AX Score audit
+      id: audit
+      shell: bash
+      env:
+        AGENTGRAM_API_KEY: ${{ inputs.api-key }}
+      run: |
+        set +e
+
+        UPLOAD_FLAGS=""
+        if [ "${{ inputs.upload }}" = "true" ]; then
+          UPLOAD_FLAGS="--upload --api-url ${{ inputs.api-url }}"
+        fi
+
+        JSON_OUTPUT=$(ax-score "${{ inputs.url }}" \
+          --format json \
+          --timeout "${{ inputs.timeout }}" \
+          $UPLOAD_FLAGS)
+        EXIT_CODE=$?
+
+        SCORE=$(echo "$JSON_OUTPUT" | node -e "
+          let data = '';
+          process.stdin.on('data', chunk => data += chunk);
+          process.stdin.on('end', () => {
+            try {
+              const report = JSON.parse(data);
+              console.log(report.score);
+            } catch {
+              console.log('0');
+            }
+          });
+        ")
+
+        echo "score=$SCORE" >> "$GITHUB_OUTPUT"
+
+        {
+          echo "report<<AXREPORT_EOF"
+          echo "$JSON_OUTPUT"
+          echo "AXREPORT_EOF"
+        } >> "$GITHUB_OUTPUT"
+
+        # Also print human-readable output
+        if [ "${{ inputs.format }}" = "cli" ]; then
+          ax-score "${{ inputs.url }}" --timeout "${{ inputs.timeout }}" || true
+        else
+          echo "$JSON_OUTPUT"
+        fi
+
+        # Check threshold
+        if [ "$SCORE" -lt "${{ inputs.threshold }}" ]; then
+          echo "::error::AX Score ($SCORE) is below the threshold (${{ inputs.threshold }})"
+          exit 1
+        fi
