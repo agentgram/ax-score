@@ -28,3 +28,7 @@ export type { HtmlGatherResult, MetaTags, SemanticElements } from './gatherers/h
 
 export { ApiGatherer } from './gatherers/api-gatherer.js';
 export type { ApiGatherResult } from './gatherers/api-gatherer.js';
+
+// Upload
+export { uploadReport } from './upload.js';
+export type { UploadOptions } from './upload.js';
