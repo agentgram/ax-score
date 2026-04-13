@@ -16,7 +16,6 @@ import { ApiGatherer } from './gatherers/api-gatherer.js';
 import { LlmsTxtAudit } from './audits/llms-txt.js';
 import { OpenapiSpecAudit } from './audits/openapi-spec.js';
 import { RobotsAiAudit } from './audits/robots-ai.js';
-import { AiPluginAudit } from './audits/ai-plugin.js';
 import { SchemaOrgAudit } from './audits/schema-org.js';
 
 // Audits — API Quality
@@ -52,7 +51,6 @@ function createAudits(): BaseAudit[] {
     new LlmsTxtAudit(),
     new OpenapiSpecAudit(),
     new RobotsAiAudit(),
-    new AiPluginAudit(),
     new SchemaOrgAudit(),
     // API Quality
     new OpenapiValidAudit(),

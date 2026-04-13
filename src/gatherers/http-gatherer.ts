@@ -16,7 +16,6 @@ export interface HttpGatherResult extends GatherResult {
   robotsTxt: FileProbe;
   llmsTxt: FileProbe;
   openapiSpec: FileProbe;
-  aiPlugin: FileProbe;
   sitemapXml: FileProbe;
   securityTxt: FileProbe;
 }
@@ -67,13 +66,12 @@ export class HttpGatherer extends BaseGatherer {
     const baseUrl = config.url;
 
     // Fetch main page + well-known files in parallel
-    const [main, robotsTxt, llmsTxt, openapiSpec, aiPlugin, sitemapXml, securityTxt] =
+    const [main, robotsTxt, llmsTxt, openapiSpec, sitemapXml, securityTxt] =
       await Promise.all([
         fetchFile(baseUrl, '/', timeout),
         fetchFile(baseUrl, '/robots.txt', timeout),
         fetchFile(baseUrl, '/llms.txt', timeout),
         fetchFile(baseUrl, '/openapi.json', timeout),
-        fetchFile(baseUrl, '/.well-known/ai-plugin.json', timeout),
         fetchFile(baseUrl, '/sitemap.xml', timeout),
         fetchFile(baseUrl, '/.well-known/security.txt', timeout),
       ]);
@@ -105,7 +103,6 @@ export class HttpGatherer extends BaseGatherer {
       robotsTxt,
       llmsTxt,
       openapiSpec,
-      aiPlugin,
       sitemapXml,
       securityTxt,
     };

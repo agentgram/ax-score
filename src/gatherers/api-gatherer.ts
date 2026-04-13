@@ -127,9 +127,7 @@ export class ApiGatherer extends BaseGatherer {
 
     // Machine-readable docs
     const hasMachineReadableDocs =
-      hasOpenApi ||
-      (httpResult?.llmsTxt?.found ?? false) ||
-      (httpResult?.aiPlugin?.found ?? false);
+      hasOpenApi || (httpResult?.llmsTxt?.found ?? false);
 
     return {
       hasOpenApi,
