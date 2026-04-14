@@ -76,6 +76,9 @@ describe('runAudit', () => {
     expect(report.score).toBeGreaterThanOrEqual(0);
     expect(report.score).toBeLessThanOrEqual(100);
 
+    // Verify site type
+    expect(['api', 'content', 'hybrid', 'unknown']).toContain(report.siteType);
+
     // Verify categories
     expect(report.categories).toBeInstanceOf(Array);
     expect(report.categories.length).toBeGreaterThan(0);

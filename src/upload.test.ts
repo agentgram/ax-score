@@ -8,6 +8,7 @@ function makeReport(overrides: Partial<AXReport> = {}): AXReport {
     timestamp: '2026-02-20T00:00:00.000Z',
     version: '0.3.0',
     score: 75,
+    siteType: 'unknown',
     categories: [],
     audits: {},
     recommendations: [],

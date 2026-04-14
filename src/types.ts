@@ -1,3 +1,5 @@
+export type SiteType = 'api' | 'content' | 'hybrid' | 'unknown';
+
 export interface AXConfig {
   url: string;
   timeout?: number;
@@ -40,6 +42,7 @@ export interface AXReport {
   timestamp: string;
   version: string;
   score: number;
+  siteType: SiteType;
   categories: AXCategory[];
   audits: Record<string, AuditResult>;
   recommendations: Recommendation[];

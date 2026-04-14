@@ -1,6 +1,7 @@
 import type { AXConfig, AXReport, AXCategory, AuditResult } from './types.js';
 import type { GatherResult } from './gatherers/base-gatherer.js';
-import { DEFAULT_CATEGORIES, VERSION } from './config/default.js';
+import { getCategoriesForSiteType, VERSION } from './config/default.js';
+import { classifySiteType } from './classifiers/site-type.js';
 import {
   calculateCategoryScore,
   calculateOverallScore,
@@ -96,6 +97,9 @@ export async function runAudit(config: AXConfig): Promise<AXReport> {
   artifacts['html'] = await htmlGatherer.gather(config, artifacts);
   artifacts['api'] = await apiGatherer.gather(config, artifacts);
 
+  // Phase 1.5: Classify — detect site type for adaptive scoring
+  const siteTypeResult = classifySiteType(artifacts);
+
   // Phase 2: Audit — run all audits against gathered artifacts
   const allAudits = createAudits();
   const audits: Record<string, AuditResult> = {};
@@ -119,8 +123,9 @@ export async function runAudit(config: AXConfig): Promise<AXReport> {
 
   await Promise.all(auditPromises);
 
-  // Phase 3: Score — calculate category and overall scores
-  const categories: AXCategory[] = DEFAULT_CATEGORIES.map((cat) => ({
+  // Phase 3: Score — use site-type-adapted categories
+  const categoriesConfig = getCategoriesForSiteType(siteTypeResult.type);
+  const categories: AXCategory[] = categoriesConfig.map((cat) => ({
     id: cat.id,
     title: cat.title,
     description: cat.description,
@@ -129,7 +134,7 @@ export async function runAudit(config: AXConfig): Promise<AXReport> {
     auditRefs: cat.auditRefs,
   }));
 
-  const allAuditRefs = DEFAULT_CATEGORIES.flatMap((c) => c.auditRefs);
+  const allAuditRefs = categoriesConfig.flatMap((c) => c.auditRefs);
   const recommendations = generateRecommendations(audits, allAuditRefs);
 
   return {
@@ -137,6 +142,7 @@ export async function runAudit(config: AXConfig): Promise<AXReport> {
     timestamp: new Date().toISOString(),
     version: VERSION,
     score: calculateOverallScore(categories),
+    siteType: siteTypeResult.type,
     categories,
     audits,
     recommendations,

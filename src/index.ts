@@ -10,6 +10,7 @@ export type {
   Recommendation,
   AuditDetails,
   AuditRef,
+  SiteType,
 } from './types.js';
 
 // Base classes (for extensibility)
@@ -32,3 +33,7 @@ export type { ApiGatherResult } from './gatherers/api-gatherer.js';
 // Upload
 export { uploadReport } from './upload.js';
 export type { UploadOptions } from './upload.js';
+
+// Site classification
+export { classifySiteType } from './classifiers/site-type.js';
+export type { SiteTypeResult } from './classifiers/site-type.js';
