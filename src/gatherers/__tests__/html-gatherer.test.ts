@@ -11,6 +11,7 @@ function makeHttpResult(body: string): Record<string, HttpGatherResult> {
       body,
       robotsTxt: { found: false, content: null, statusCode: null },
       llmsTxt: { found: false, content: null, statusCode: null },
+      llmsFullTxt: { found: false, content: null, statusCode: null },
       openapiSpec: { found: false, content: null, statusCode: null },
       aiPlugin: { found: false, content: null, statusCode: null },
       sitemapXml: { found: false, content: null, statusCode: null },

@@ -15,6 +15,7 @@ export interface HttpGatherResult extends GatherResult {
   body: string;
   robotsTxt: FileProbe;
   llmsTxt: FileProbe;
+  llmsFullTxt: FileProbe;
   openapiSpec: FileProbe;
   sitemapXml: FileProbe;
   securityTxt: FileProbe;
@@ -66,11 +67,12 @@ export class HttpGatherer extends BaseGatherer {
     const baseUrl = config.url;
 
     // Fetch main page + well-known files in parallel
-    const [main, robotsTxt, llmsTxt, openapiSpec, sitemapXml, securityTxt] =
+    const [main, robotsTxt, llmsTxt, llmsFullTxt, openapiSpec, sitemapXml, securityTxt] =
       await Promise.all([
         fetchFile(baseUrl, '/', timeout),
         fetchFile(baseUrl, '/robots.txt', timeout),
         fetchFile(baseUrl, '/llms.txt', timeout),
+        fetchFile(baseUrl, '/llms-full.txt', timeout),
         fetchFile(baseUrl, '/openapi.json', timeout),
         fetchFile(baseUrl, '/sitemap.xml', timeout),
         fetchFile(baseUrl, '/.well-known/security.txt', timeout),
@@ -102,6 +104,7 @@ export class HttpGatherer extends BaseGatherer {
       body: main.content ?? '',
       robotsTxt,
       llmsTxt,
+      llmsFullTxt,
       openapiSpec,
       sitemapXml,
       securityTxt,

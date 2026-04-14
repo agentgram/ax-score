@@ -31,7 +31,7 @@ describe('runAudit', () => {
         } as unknown as Response);
       }
       // All other probes return 404
-      if (
+      if (url.endsWith('/llms-full.txt') ||
         url.endsWith('/openapi.json') ||
         url.endsWith('/sitemap.xml') ||
         url.includes('security.txt')
@@ -89,7 +89,7 @@ describe('runAudit', () => {
 
     // Verify audits
     expect(typeof report.audits).toBe('object');
-    expect(Object.keys(report.audits).length).toBe(18);
+    expect(Object.keys(report.audits).length).toBe(19);
 
     // Verify recommendations
     expect(report.recommendations).toBeInstanceOf(Array);

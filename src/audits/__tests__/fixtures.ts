@@ -25,6 +25,7 @@ export function makeHttpArtifact(
       body: '',
       robotsTxt: { ...EMPTY_FILE_PROBE },
       llmsTxt: { ...EMPTY_FILE_PROBE },
+      llmsFullTxt: { ...EMPTY_FILE_PROBE },
       openapiSpec: { ...EMPTY_FILE_PROBE },
       sitemapXml: { ...EMPTY_FILE_PROBE },
       securityTxt: { ...EMPTY_FILE_PROBE },
@@ -51,6 +52,7 @@ const EMPTY_SEMANTIC_ELEMENTS: SemanticElements = {
   hasFooter: false,
   hasH1: false,
   headingCount: 0,
+  headingLevels: [],
 };
 
 export function makeHtmlArtifact(
@@ -62,6 +64,7 @@ export function makeHtmlArtifact(
       jsonLd: [],
       metaTags: { ...EMPTY_META_TAGS },
       semanticElements: { ...EMPTY_SEMANTIC_ELEMENTS },
+      feedLinks: [],
       links: [],
       ...overrides,
     },
