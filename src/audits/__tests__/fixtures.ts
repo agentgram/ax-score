@@ -26,7 +26,6 @@ export function makeHttpArtifact(
       robotsTxt: { ...EMPTY_FILE_PROBE },
       llmsTxt: { ...EMPTY_FILE_PROBE },
       openapiSpec: { ...EMPTY_FILE_PROBE },
-      aiPlugin: { ...EMPTY_FILE_PROBE },
       sitemapXml: { ...EMPTY_FILE_PROBE },
       securityTxt: { ...EMPTY_FILE_PROBE },
       ...overrides,

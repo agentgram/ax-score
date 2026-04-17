@@ -74,13 +74,12 @@ The output follows the `AXReport` TypeScript interface defined in `src/types.ts`
 
 ## Audit IDs
 
-There are 19 audits organized into 6 categories:
+There are 18 audits organized into 6 categories:
 
 ### Discovery
 - `llms-txt` -- Checks for `/llms.txt`
 - `openapi-spec` -- Checks for `/openapi.json`
 - `robots-ai` -- Checks if robots.txt allows AI agents
-- `ai-plugin` -- Checks for `/.well-known/ai-plugin.json`
 - `schema-org` -- Checks for JSON-LD Schema.org data
 
 ### API Quality
@@ -128,7 +127,6 @@ There are 19 audits organized into 6 categories:
         { "id": "llms-txt", "weight": 8 },
         { "id": "openapi-spec", "weight": 8 },
         { "id": "robots-ai", "weight": 4 },
-        { "id": "ai-plugin", "weight": 3 },
         { "id": "schema-org", "weight": 2 }
       ]
     },

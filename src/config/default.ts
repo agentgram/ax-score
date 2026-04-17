@@ -18,7 +18,6 @@ export const DEFAULT_CATEGORIES: CategoryConfig[] = [
       { id: 'llms-txt', weight: 8 },
       { id: 'openapi-spec', weight: 8 },
       { id: 'robots-ai', weight: 4 },
-      { id: 'ai-plugin', weight: 3 },
       { id: 'schema-org', weight: 2 },
     ],
   },

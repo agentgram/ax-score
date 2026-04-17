@@ -33,7 +33,6 @@ describe('runAudit', () => {
       // All other probes return 404
       if (
         url.endsWith('/openapi.json') ||
-        url.includes('ai-plugin.json') ||
         url.endsWith('/sitemap.xml') ||
         url.includes('security.txt')
       ) {
@@ -87,7 +86,7 @@ describe('runAudit', () => {
 
     // Verify audits
     expect(typeof report.audits).toBe('object');
-    expect(Object.keys(report.audits).length).toBe(19);
+    expect(Object.keys(report.audits).length).toBe(18);
 
     // Verify recommendations
     expect(report.recommendations).toBeInstanceOf(Array);

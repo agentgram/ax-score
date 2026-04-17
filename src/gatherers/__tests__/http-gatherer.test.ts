@@ -39,9 +39,6 @@ describe('HttpGatherer', () => {
       if (url.endsWith('/openapi.json')) {
         return mockResponse('', 404);
       }
-      if (url.includes('ai-plugin.json')) {
-        return mockResponse('', 404);
-      }
       if (url.endsWith('/sitemap.xml')) {
         return mockResponse('', 404);
       }
@@ -63,7 +60,7 @@ describe('HttpGatherer', () => {
     expect(result.llmsTxt.content).toContain('# My Site');
     expect(result.openapiSpec.found).toBe(false);
 
-    // Verify fetch was called (main page + 6 well-known files + 1 HEAD request)
+    // Verify fetch was called (main page + 5 well-known files + 1 HEAD request)
     expect(fetchSpy).toHaveBeenCalled();
   });
 

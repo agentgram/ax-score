@@ -5,7 +5,6 @@ export type { AuditMeta } from './base-audit.js';
 export { LlmsTxtAudit } from './llms-txt.js';
 export { OpenapiSpecAudit } from './openapi-spec.js';
 export { RobotsAiAudit } from './robots-ai.js';
-export { AiPluginAudit } from './ai-plugin.js';
 export { SchemaOrgAudit } from './schema-org.js';
 
 // API Quality
