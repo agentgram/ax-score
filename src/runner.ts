@@ -29,6 +29,7 @@ import { ContentNegotiationAudit } from './audits/content-negotiation.js';
 import { JsonLdAudit } from './audits/json-ld.js';
 import { MetaTagsAudit } from './audits/meta-tags.js';
 import { SemanticHtmlAudit } from './audits/semantic-html.js';
+import { ContentFeedAudit } from './audits/content-feed.js';
 
 // Audits — Auth & Onboarding
 import { SelfServiceAuthAudit } from './audits/self-service-auth.js';
@@ -62,6 +63,7 @@ function createAudits(): BaseAudit[] {
     new JsonLdAudit(),
     new MetaTagsAudit(),
     new SemanticHtmlAudit(),
+    new ContentFeedAudit(),
     // Auth & Onboarding
     new SelfServiceAuthAudit(),
     new NoCaptchaAudit(),

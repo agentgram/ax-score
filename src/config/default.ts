@@ -43,9 +43,10 @@ const BASE_CATEGORIES: CategoryConfig[] = [
     description: 'Is your content machine-readable?',
     weight: 20,
     auditRefs: [
-      { id: 'json-ld', weight: 10 },
-      { id: 'meta-tags', weight: 5 },
-      { id: 'semantic-html', weight: 5 },
+      { id: 'json-ld', weight: 8 },
+      { id: 'content-feed', weight: 4 },
+      { id: 'meta-tags', weight: 4 },
+      { id: 'semantic-html', weight: 4 },
     ],
   },
   {

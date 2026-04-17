@@ -9,14 +9,33 @@ describe('LlmsTxtAudit', () => {
     expect(audit.meta.id).toBe('llms-txt');
   });
 
-  it('should pass when llms.txt is found with content', async () => {
+  it('should pass with high score when llms.txt has full structure and llms-full.txt exists', async () => {
     const artifacts = makeHttpArtifact({
-      llmsTxt: { found: true, content: '# My Site\nThis is a description.', statusCode: 200 },
+      llmsTxt: {
+        found: true,
+        content: '# My Site\n\n> A description of my site\n\n### Docs\n\nhttps://example.com/docs This is a long enough content to pass the 100 char threshold check.',
+        statusCode: 200,
+      },
+      llmsFullTxt: {
+        found: true,
+        content: '# Full docs\nLots of content here...',
+        statusCode: 200,
+      },
     });
 
     const result = await audit.audit(artifacts);
     expect(result.score).toBe(1);
     expect(result.id).toBe('llms-txt');
+  });
+
+  it('should return partial score when llms.txt has minimal content', async () => {
+    const artifacts = makeHttpArtifact({
+      llmsTxt: { found: true, content: 'just some text', statusCode: 200 },
+    });
+
+    const result = await audit.audit(artifacts);
+    expect(result.score).toBeGreaterThan(0);
+    expect(result.score).toBeLessThan(1);
   });
 
   it('should fail when llms.txt is not found', async () => {
@@ -34,7 +53,7 @@ describe('LlmsTxtAudit', () => {
     });
 
     const result = await audit.audit(artifacts);
-    expect(result.score).toBe(0.5);
+    expect(result.score).toBe(0.2);
   });
 
   it('should return partial score when llms.txt contains only whitespace', async () => {
@@ -43,6 +62,18 @@ describe('LlmsTxtAudit', () => {
     });
 
     const result = await audit.audit(artifacts);
-    expect(result.score).toBe(0.5);
+    expect(result.score).toBe(0.2);
+  });
+
+  it('should give bonus for companion llms-full.txt', async () => {
+    const without = await audit.audit(makeHttpArtifact({
+      llmsTxt: { found: true, content: '# Site\nSome text here.', statusCode: 200 },
+    }));
+    const withFull = await audit.audit(makeHttpArtifact({
+      llmsTxt: { found: true, content: '# Site\nSome text here.', statusCode: 200 },
+      llmsFullTxt: { found: true, content: 'Full content here', statusCode: 200 },
+    }));
+
+    expect(withFull.score).toBeGreaterThan(without.score);
   });
 });

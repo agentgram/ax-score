@@ -25,7 +25,7 @@ export { HttpGatherer } from './gatherers/http-gatherer.js';
 export type { HttpGatherResult, FileProbe } from './gatherers/http-gatherer.js';
 
 export { HtmlGatherer } from './gatherers/html-gatherer.js';
-export type { HtmlGatherResult, MetaTags, SemanticElements } from './gatherers/html-gatherer.js';
+export type { HtmlGatherResult, MetaTags, SemanticElements, FeedLink } from './gatherers/html-gatherer.js';
 
 export { ApiGatherer } from './gatherers/api-gatherer.js';
 export type { ApiGatherResult } from './gatherers/api-gatherer.js';

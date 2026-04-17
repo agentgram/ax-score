@@ -3,7 +3,18 @@ import type { GatherResult } from '../gatherers/base-gatherer.js';
 import type { HttpGatherResult } from '../gatherers/http-gatherer.js';
 import { BaseAudit, type AuditMeta } from './base-audit.js';
 
-const AI_USER_AGENTS = ['GPTBot', 'anthropic', 'Google-Extended', 'CCBot'];
+const AI_USER_AGENTS = [
+  'GPTBot',
+  'ChatGPT-User',
+  'ClaudeBot',
+  'anthropic',
+  'anthropic-ai',
+  'PerplexityBot',
+  'Google-Extended',
+  'Applebot-Extended',
+  'CCBot',
+  'Bard',
+];
 
 /**
  * Checks whether robots.txt contains AI-friendly directives.
@@ -18,7 +29,8 @@ export class RobotsAiAudit extends BaseAudit {
     failureTitle: 'robots.txt blocks AI agents',
     description:
       'A robots.txt file that does not block common AI user agents ' +
-      '(GPTBot, Anthropic, Google-Extended, CCBot) allows AI agents to crawl and index the site.',
+      '(GPTBot, ClaudeBot, PerplexityBot, Google-Extended, Applebot-Extended, CCBot, etc.) ' +
+      'allows AI agents to crawl and index the site.',
     requiredGatherers: ['http'],
     scoreDisplayMode: 'numeric',
   };

@@ -11,6 +11,7 @@ function makeHttpResult(overrides: Partial<HttpGatherResult> = {}): Record<strin
       body: '',
       robotsTxt: { found: false, content: null, statusCode: null },
       llmsTxt: { found: false, content: null, statusCode: null },
+      llmsFullTxt: { found: false, content: null, statusCode: null },
       openapiSpec: { found: false, content: null, statusCode: null },
       sitemapXml: { found: false, content: null, statusCode: null },
       securityTxt: { found: false, content: null, statusCode: null },

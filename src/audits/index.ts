@@ -17,6 +17,7 @@ export { ContentNegotiationAudit } from './content-negotiation.js';
 export { JsonLdAudit } from './json-ld.js';
 export { MetaTagsAudit } from './meta-tags.js';
 export { SemanticHtmlAudit } from './semantic-html.js';
+export { ContentFeedAudit } from './content-feed.js';
 
 // Auth & Onboarding
 export { SelfServiceAuthAudit } from './self-service-auth.js';

@@ -12,6 +12,12 @@ export interface MetaTags {
   robots: string | null;
 }
 
+export interface FeedLink {
+  type: string;
+  href: string;
+  title: string | null;
+}
+
 export interface SemanticElements {
   hasNav: boolean;
   hasMain: boolean;
@@ -20,6 +26,7 @@ export interface SemanticElements {
   hasFooter: boolean;
   hasH1: boolean;
   headingCount: number;
+  headingLevels: number[];
 }
 
 export interface HtmlGatherResult extends GatherResult {
@@ -27,6 +34,7 @@ export interface HtmlGatherResult extends GatherResult {
   jsonLd: unknown[];
   metaTags: MetaTags;
   semanticElements: SemanticElements;
+  feedLinks: FeedLink[];
   links: string[];
 }
 
@@ -68,6 +76,28 @@ function extractJsonLd(html: string): unknown[] {
   return results;
 }
 
+function extractFeedLinks(html: string): FeedLink[] {
+  const feeds: FeedLink[] = [];
+  const regex = /<link[^>]*rel=["']alternate["'][^>]*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(html)) !== null) {
+    const tag = match[0];
+    const typeMatch = tag.match(/type=["']([^"']*)["']/i);
+    if (typeMatch && typeMatch[1] && (typeMatch[1].includes('rss') || typeMatch[1].includes('atom') || typeMatch[1].includes('feed'))) {
+      const hrefMatch = tag.match(/href=["']([^"']*)["']/i);
+      const titleMatch = tag.match(/title=["']([^"']*)["']/i);
+      if (hrefMatch && hrefMatch[1]) {
+        feeds.push({
+          type: typeMatch[1],
+          href: hrefMatch[1],
+          title: titleMatch?.[1] ?? null,
+        });
+      }
+    }
+  }
+  return feeds;
+}
+
 function extractLinks(html: string): string[] {
   const links: string[] = [];
   const regex = /<a[^>]*href=["']([^"'#][^"']*)["']/gi;
@@ -80,6 +110,8 @@ function extractLinks(html: string): string[] {
 
 function checkSemanticElements(html: string): SemanticElements {
   const lower = html.toLowerCase();
+  const headingMatches = lower.matchAll(/<h([1-6])[\s>]/gi);
+  const headingLevels = [...headingMatches].map((m) => parseInt(m[1]!, 10));
   return {
     hasNav: /<nav[\s>]/i.test(lower),
     hasMain: /<main[\s>]/i.test(lower),
@@ -87,7 +119,8 @@ function checkSemanticElements(html: string): SemanticElements {
     hasHeader: /<header[\s>]/i.test(lower),
     hasFooter: /<footer[\s>]/i.test(lower),
     hasH1: /<h1[\s>]/i.test(lower),
-    headingCount: (lower.match(/<h[1-6][\s>]/gi) ?? []).length,
+    headingCount: headingLevels.length,
+    headingLevels,
   };
 }
 
@@ -118,6 +151,7 @@ export class HtmlGatherer extends BaseGatherer {
         robots: extractMetaContent(html, 'robots'),
       },
       semanticElements: checkSemanticElements(html),
+      feedLinks: extractFeedLinks(html),
       links: extractLinks(html),
     };
   }

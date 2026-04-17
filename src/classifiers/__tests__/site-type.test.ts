@@ -17,8 +17,8 @@ function makeArtifacts(
     body: '<html><body>hello</body></html>',
     robotsTxt: EMPTY_PROBE,
     llmsTxt: EMPTY_PROBE,
+    llmsFullTxt: EMPTY_PROBE,
     openapiSpec: EMPTY_PROBE,
-    aiPlugin: EMPTY_PROBE,
     sitemapXml: EMPTY_PROBE,
     securityTxt: EMPTY_PROBE,
     ...httpOverrides,
@@ -44,7 +44,9 @@ function makeArtifacts(
       hasFooter: false,
       hasH1: false,
       headingCount: 0,
+      headingLevels: [],
     },
+    feedLinks: [],
     links: [],
     ...htmlOverrides,
   };
@@ -65,6 +67,7 @@ describe('classifySiteType', () => {
           hasFooter: true,
           hasH1: true,
           headingCount: 8,
+          headingLevels: [1, 2, 2, 3, 3, 4, 4, 4],
         },
         jsonLd: [{ '@type': 'WebSite', name: 'Blog' }],
         metaTags: {
@@ -110,6 +113,7 @@ describe('classifySiteType', () => {
           hasFooter: true,
           hasH1: true,
           headingCount: 10,
+          headingLevels: [1, 2, 2, 3, 3, 4, 4, 4, 5, 5],
         },
         jsonLd: [{ '@type': 'BlogPosting', headline: 'Post' }],
       }

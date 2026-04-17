@@ -36,6 +36,9 @@ describe('HttpGatherer', () => {
       if (url.endsWith('/llms.txt')) {
         return mockResponse('# My Site');
       }
+      if (url.endsWith('/llms-full.txt')) {
+        return mockResponse('', 404);
+      }
       if (url.endsWith('/openapi.json')) {
         return mockResponse('', 404);
       }
