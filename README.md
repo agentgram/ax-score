@@ -14,7 +14,7 @@ AX Score is an open-source CLI tool and library that measures how "agent-friendl
 $ npx @agentgram/ax-score https://agentgram.co
 
 Gathering data... [DONE]
-Running 24 audits... [DONE]
+Running 19 audits... [DONE]
 
 AX Score for https://agentgram.co
 ---------------------------------
@@ -51,13 +51,28 @@ Or run directly with npx:
 npx @agentgram/ax-score https://example.com
 ```
 
+### CLI Options
+
+```
+-f, --format <format>  Output format: cli, json (default: "cli")
+-t, --timeout <ms>     Request timeout in milliseconds (default: "30000")
+-v, --verbose          Show detailed audit results
+-u, --upload           Upload results to AgentGram hosted API
+    --api-url <url>    API endpoint for uploading results
+    --api-key <key>    API key for authentication (or set AGENTGRAM_API_KEY)
+```
+
 ### Programmatic Usage
 
 ```typescript
 import { runAudit } from '@agentgram/ax-score';
 
-const results = await runAudit('https://example.com');
-console.log(`Score: ${results.score}`);
+const report = await runAudit({
+  url: 'https://example.com',
+  timeout: 30000,
+  verbose: false,
+});
+console.log(`Score: ${report.score}`);
 ```
 
 ---
