@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import { Command } from 'commander';
+import { Command, InvalidArgumentError } from 'commander';
 import ora from 'ora';
-import { runAudit } from '../runner.js';
+import { runRepeatedAudit } from '../runner.js';
 import { renderReport } from '../reporter/cli.js';
 import { renderJSON } from '../reporter/json.js';
 import { uploadReport } from '../upload.js';
@@ -15,6 +15,7 @@ interface CliOptions {
   upload: boolean;
   apiUrl: string;
   apiKey?: string;
+  repeat: number;
 }
 
 const DEFAULT_API_URL = 'https://agentgram.co/api/v1/ax-score/scan';
@@ -34,15 +35,25 @@ program
   .option('-u, --upload', 'Upload results to AgentGram hosted API', false)
   .option('--api-url <url>', 'API endpoint for uploading results', DEFAULT_API_URL)
   .option('--api-key <key>', 'API key for authentication (or set AGENTGRAM_API_KEY env var)')
+  .option(
+    '-r, --repeat <n>',
+    'Run the audit N times and report score stability',
+    parsePositiveInteger,
+    1
+  )
   .action(async (url: string, options: CliOptions) => {
-    const spinner = ora(`Auditing ${url}...`).start();
+    const repeat = options.repeat;
+    const spinner = ora(
+      repeat > 1 ? `Auditing ${url} (${repeat} runs)...` : `Auditing ${url}...`
+    ).start();
 
     try {
-      const report = await runAudit({
+      const config = {
         url,
         timeout: parseInt(options.timeout, 10),
         verbose: options.verbose,
-      });
+      };
+      const report = await runRepeatedAudit(config, repeat);
 
       spinner.stop();
 
@@ -74,9 +85,7 @@ program
           uploadSpinner.succeed('Results uploaded successfully.');
         } catch (uploadError) {
           uploadSpinner.fail('Failed to upload results.');
-          console.error(
-            uploadError instanceof Error ? uploadError.message : String(uploadError)
-          );
+          console.error(uploadError instanceof Error ? uploadError.message : String(uploadError));
           // Upload failure is non-fatal: still exit based on score
         }
       }
@@ -90,3 +99,13 @@ program
   });
 
 program.parse();
+
+function parsePositiveInteger(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new InvalidArgumentError('repeat must be a positive integer');
+  }
+
+  return parsed;
+}

@@ -46,10 +46,21 @@ export interface AXReport {
   categories: AXCategory[];
   audits: Record<string, AuditResult>;
   recommendations: Recommendation[];
+  stability?: StabilityResult;
 }
 
 export interface Recommendation {
   audit: string;
   message: string;
   impact: number;
+}
+
+export interface StabilityResult {
+  runs: number;
+  scores: number[];
+  min: number;
+  max: number;
+  mean: number;
+  delta: number;
+  variance: number;
 }

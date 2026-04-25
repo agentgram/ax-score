@@ -60,19 +60,41 @@ npx @agentgram/ax-score https://example.com
 -u, --upload           Upload results to AgentGram hosted API
     --api-url <url>    API endpoint for uploading results
     --api-key <key>    API key for authentication (or set AGENTGRAM_API_KEY)
+-r, --repeat <n>       Run the audit N times and report score stability (default: 1)
 ```
+
+### Repeat-run stability checks
+
+Use `--repeat` when you want to measure score drift across sequential runs of the same URL:
+
+```bash
+npx @agentgram/ax-score https://example.com --repeat 3
+```
+
+The CLI keeps the usual report shape and adds a `Stability` block with per-run scores plus aggregate mean, range, delta, and variance.
 
 ### Programmatic Usage
 
 ```typescript
-import { runAudit } from '@agentgram/ax-score';
+import { runAudit, runRepeatedAudit } from '@agentgram/ax-score';
 
-const report = await runAudit({
+const singleRun = await runAudit({
   url: 'https://example.com',
   timeout: 30000,
   verbose: false,
 });
-console.log(`Score: ${report.score}`);
+
+const repeatedRun = await runRepeatedAudit(
+  {
+    url: 'https://example.com',
+    timeout: 30000,
+    verbose: false,
+  },
+  3
+);
+
+console.log(`Single-run score: ${singleRun.score}`);
+console.log(repeatedRun.stability);
 ```
 
 ---
