@@ -17,6 +17,7 @@ The output follows the `AXReport` TypeScript interface defined in `src/types.ts`
 | `categories`      | `AXCategory[]`                | Array of category scores                         |
 | `audits`          | `Record<string, AuditResult>` | Map of audit ID to audit result                  |
 | `recommendations` | `Recommendation[]`            | Actionable recommendations sorted by impact      |
+| `stability`       | `StabilityResult \| undefined` | Present when the audit is run with repeat mode   |
 
 ---
 
@@ -69,6 +70,18 @@ The output follows the `AXReport` TypeScript interface defined in `src/types.ts`
 | `audit`   | `string` | The audit ID this recommendation relates to   |
 | `message` | `string` | The audit description explaining the issue    |
 | `impact`  | `number` | Potential score improvement (higher = better) |
+
+## `StabilityResult`
+
+| Field      | Type       | Description                                              |
+| ---------- | ---------- | -------------------------------------------------------- |
+| `runs`     | `number`   | Number of sequential audit runs                          |
+| `scores`   | `number[]` | Overall score from each run, in execution order          |
+| `min`      | `number`   | Lowest overall score across the repeated runs            |
+| `max`      | `number`   | Highest overall score across the repeated runs           |
+| `mean`     | `number`   | Mean overall score across the repeated runs              |
+| `delta`    | `number`   | `max - min`, useful for quick drift checks               |
+| `variance` | `number`   | Population variance across the repeated overall scores   |
 
 ---
 
@@ -181,9 +194,20 @@ There are 18 audits organized into 6 categories:
       "message": "Rate limit headers inform AI agents about request quotas...",
       "impact": 3
     }
-  ]
+  ],
+  "stability": {
+    "runs": 3,
+    "scores": [62, 58, 61],
+    "min": 58,
+    "max": 62,
+    "mean": 60.33,
+    "delta": 4,
+    "variance": 2.89
+  }
 }
 ```
+
+When `runAudit()` is used directly, or the CLI runs without `--repeat`, the `stability` field is omitted.
 
 ---
 

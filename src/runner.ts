@@ -1,4 +1,4 @@
-import type { AXConfig, AXReport, AXCategory, AuditResult } from './types.js';
+import type { AXConfig, AXReport, AXCategory, AuditResult, StabilityResult } from './types.js';
 import type { GatherResult } from './gatherers/base-gatherer.js';
 import { getCategoriesForSiteType, VERSION } from './config/default.js';
 import { classifySiteType } from './classifiers/site-type.js';
@@ -147,4 +147,46 @@ export async function runAudit(config: AXConfig): Promise<AXReport> {
     audits,
     recommendations,
   };
+}
+
+/**
+ * Run the audit `repeat` times and attach stability metrics.
+ * When repeat <= 1, behaves identically to `runAudit`.
+ */
+export async function runRepeatedAudit(config: AXConfig, repeat: number): Promise<AXReport> {
+  if (!Number.isInteger(repeat) || repeat < 1) {
+    throw new Error('Repeat count must be a positive integer.');
+  }
+
+  if (repeat === 1) {
+    return runAudit(config);
+  }
+
+  const reports: AXReport[] = [];
+  for (let i = 0; i < repeat; i++) {
+    reports.push(await runAudit(config));
+  }
+
+  const scores = reports.map((report) => report.score);
+  const min = Math.min(...scores);
+  const max = Math.max(...scores);
+  const rawMean = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+  const rawVariance = scores.reduce((sum, score) => sum + (score - rawMean) ** 2, 0) / scores.length;
+
+  const stability: StabilityResult = {
+    runs: repeat,
+    scores,
+    min,
+    max,
+    mean: roundMetric(rawMean),
+    delta: max - min,
+    variance: roundMetric(rawVariance),
+  };
+
+  const base = reports[reports.length - 1]!;
+  return { ...base, stability };
+}
+
+function roundMetric(value: number): number {
+  return Math.round(value * 100) / 100;
 }

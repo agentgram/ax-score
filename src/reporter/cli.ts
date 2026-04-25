@@ -27,6 +27,10 @@ function renderCategory(category: AXCategory): string {
   return `  ${label.padEnd(8)} ${category.title.padEnd(20)} ${score}`;
 }
 
+function formatMetric(value: number): string {
+  return Number.isInteger(value) ? `${value}` : value.toFixed(2);
+}
+
 /**
  * Render an AX report as a rich CLI output.
  */
@@ -46,6 +50,17 @@ export function renderReport(report: AXReport): string {
 
   for (const category of report.categories) {
     lines.push(renderCategory(category));
+  }
+
+  if (report.stability) {
+    const s = report.stability;
+    lines.push('');
+    lines.push(chalk.bold('  Stability:'));
+    lines.push(`  Runs: ${s.runs}   Scores: [${s.scores.join(', ')}]`);
+    lines.push(
+      `  Mean: ${formatMetric(s.mean)}   Range: ${formatMetric(s.min)}-${formatMetric(s.max)} ` +
+        `(delta ${formatMetric(s.delta)})   Variance: ${formatMetric(s.variance)}`
+    );
   }
 
   if (report.recommendations.length > 0) {

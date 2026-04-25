@@ -1,5 +1,5 @@
 // Main API
-export { runAudit } from './runner.js';
+export { runAudit, runRepeatedAudit } from './runner.js';
 
 // Types
 export type {
@@ -11,6 +11,7 @@ export type {
   AuditDetails,
   AuditRef,
   SiteType,
+  StabilityResult,
 } from './types.js';
 
 // Base classes (for extensibility)
