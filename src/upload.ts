@@ -50,10 +50,11 @@ export async function uploadReport(
   } catch (err) {
     clearTimeout(timer);
     if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new Error(`Upload timed out after ${timeout}ms.`);
+      throw new Error(`Upload timed out after ${timeout}ms.`, { cause: err });
     }
     throw new Error(
-      `Upload failed: ${err instanceof Error ? err.message : 'Unknown network error'}`
+      `Upload failed: ${err instanceof Error ? err.message : 'Unknown network error'}`,
+      { cause: err }
     );
   } finally {
     clearTimeout(timer);
