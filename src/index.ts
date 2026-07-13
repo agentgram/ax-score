@@ -1,7 +1,7 @@
 // Main API
 export { runAudit, runRepeatedAudit } from './runner.js';
 export { runMcpAudit, runMcpSweep } from './mcp-runner.js';
-export type { McpSweepConfig, McpSweepProgress } from './mcp-runner.js';
+export type { McpSweepConfig, McpSweepProgress, McpAuditContext } from './mcp-runner.js';
 
 // Types
 export type {
@@ -52,10 +52,10 @@ export type { McpRegistryGatherResult, ListRegistryServersOptions } from './gath
 export { McpPackageGatherer } from './gatherers/mcp-package.js';
 export type { McpPackageGatherResult, PackageProbe } from './gatherers/mcp-package.js';
 
-export { McpRepoGatherer, parseGithubRepoUrl } from './gatherers/mcp-repo.js';
+export { McpRepoGatherer, GithubRateLimiter, parseGithubRepoUrl } from './gatherers/mcp-repo.js';
 export type { McpRepoGatherResult, McpReadmeProbe, McpRepoProvider } from './gatherers/mcp-repo.js';
 
-export { McpRemoteGatherer } from './gatherers/mcp-remote.js';
+export { McpRemoteGatherer, isPrivateHost } from './gatherers/mcp-remote.js';
 export type { McpRemoteGatherResult, RemoteProbe } from './gatherers/mcp-remote.js';
 
 // MCP config

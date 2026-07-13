@@ -140,4 +140,21 @@ describe('listRegistryServers', () => {
 
     await expect(listRegistryServers({ limit: 5 })).rejects.toThrow('unreachable');
   });
+
+  it('should terminate on a cyclic cursor instead of looping forever', async () => {
+    // The registry keeps returning the same nextCursor with duplicate servers.
+    const cyclicPage = {
+      servers: [{ server: { name: 'io.github.a/one', version: '1.0.0' } }],
+      metadata: { nextCursor: 'stuck-cursor', count: 1 },
+    };
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(() => jsonResponse(cyclicPage));
+
+    const records = await listRegistryServers({ limit: 50 });
+
+    expect(records).toHaveLength(1);
+    // First request + one follow of the cursor; the repeated cursor breaks the loop.
+    expect(fetchSpy.mock.calls.length).toBe(2);
+  });
 });

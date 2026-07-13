@@ -88,6 +88,7 @@ export function makeRepoArtifact(
     stars: 250,
     pushedAt: daysAgoIso(7),
     license: 'MIT',
+    rateLimited: false,
     readme: {
       checked: true,
       exists: true,
@@ -107,6 +108,7 @@ export function makeRemoteProbe(overrides: Partial<RemoteProbe> = {}): RemotePro
     type: 'streamable-http',
     https: true,
     validUrl: true,
+    privateHost: false,
     reachable: true,
     statusCode: 405,
     ...overrides,

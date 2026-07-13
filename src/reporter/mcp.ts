@@ -73,6 +73,16 @@ export function renderMcpReport(report: McpReport): string {
     );
   }
 
+  if (report.rateLimited) {
+    lines.push('');
+    lines.push(
+      chalk.yellow(
+        '  Note: GitHub rate limiting degraded repository evidence for this run. ' +
+          'Set GITHUB_TOKEN and re-run for full provenance and documentation scoring.'
+      )
+    );
+  }
+
   if (report.recommendations.length > 0) {
     lines.push('');
     lines.push(chalk.bold('  Top Fixes:'));
@@ -112,16 +122,43 @@ export function renderMcpLeaderboard(report: McpSweepReport): string {
   lines.push(`|--:|:-------|------:|${categoryColumns.map(() => '----:').join('|')}|`);
 
   let rank = 0;
+  let hasExcluded = false;
+  let hasRateLimited = false;
   for (const entry of report.entries) {
     if (entry.score === null) continue;
     rank += 1;
     const categoryCells = categoryColumns.map((col) => {
       const score = entry.categoryScores[col.id];
-      return score === undefined ? 'n/a' : String(score);
+      if (score === undefined || score === null) {
+        // Excluded category (nothing evaluable) — distinct from a genuine 0.
+        hasExcluded = true;
+        return 'n/a';
+      }
+      return String(score);
     });
+    const marker = entry.rateLimited ? ' \\*' : '';
+    if (entry.rateLimited) hasRateLimited = true;
     lines.push(
-      `| ${rank} | ${escapeMarkdown(entry.server)} | **${entry.score}** | ${categoryCells.join(' | ')} |`
+      `| ${rank} | ${escapeMarkdown(entry.server)}${marker} | **${entry.score}** | ${categoryCells.join(' | ')} |`
     );
+  }
+
+  const legend: string[] = [];
+  if (hasExcluded) {
+    legend.push(
+      'n/a = category excluded from scoring (no evaluable audits: evidence unavailable or nothing to evaluate) — not a score of 0.'
+    );
+  }
+  if (hasRateLimited) {
+    legend.push(
+      '\\* = scored while GitHub rate limiting degraded repository evidence; affected audits were excluded, not failed. Set GITHUB_TOKEN to avoid this.'
+    );
+  }
+  if (legend.length > 0) {
+    lines.push('');
+    for (const note of legend) {
+      lines.push(`> ${note}`);
+    }
   }
 
   const failures = report.entries.filter((entry) => entry.score === null);

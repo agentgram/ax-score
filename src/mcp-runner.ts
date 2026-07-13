@@ -23,7 +23,7 @@ import {
 // Gatherers
 import { McpRegistryGatherer, listRegistryServers } from './gatherers/mcp-registry.js';
 import { McpPackageGatherer } from './gatherers/mcp-package.js';
-import { McpRepoGatherer } from './gatherers/mcp-repo.js';
+import { McpRepoGatherer, GithubRateLimiter } from './gatherers/mcp-repo.js';
 import { McpRemoteGatherer } from './gatherers/mcp-remote.js';
 
 // Audits — Metadata Completeness
@@ -108,12 +108,20 @@ function applyApplicability(
   });
 }
 
+/** Shared per-run context, used by sweeps to coordinate rate-limit state. */
+export interface McpAuditContext {
+  githubLimiter?: GithubRateLimiter;
+}
+
 /**
  * Run an MCP server audit.
  * Orchestrates the Gather → Audit → Score → Report pipeline against the
  * official MCP Registry, package registries, GitHub, and remote endpoints.
  */
-export async function runMcpAudit(config: McpConfig): Promise<McpReport> {
+export async function runMcpAudit(
+  config: McpConfig,
+  context: McpAuditContext = {}
+): Promise<McpReport> {
   // Phase 1: Gather — registry record first, derived evidence second
   const artifacts: Record<string, GatherResult> = {};
 
@@ -128,7 +136,7 @@ export async function runMcpAudit(config: McpConfig): Promise<McpReport> {
 
   const [packageResult, repoResult, remoteResult] = await Promise.all([
     new McpPackageGatherer().gather(config, artifacts),
-    new McpRepoGatherer().gather(config, artifacts),
+    new McpRepoGatherer(context.githubLimiter).gather(config, artifacts),
     new McpRemoteGatherer().gather(config, artifacts),
   ]);
   artifacts['mcpPackage'] = packageResult;
@@ -178,6 +186,7 @@ export async function runMcpAudit(config: McpConfig): Promise<McpReport> {
     timestamp: new Date().toISOString(),
     version: VERSION,
     score: calculateOverallScore(categories),
+    rateLimited: repoResult.rateLimited,
     categories,
     audits,
     recommendations,
@@ -239,27 +248,46 @@ export async function runMcpSweep(
     timeout: config.timeout,
   });
 
+  // One limiter for the whole sweep: the first exhausted-quota response
+  // switches every later GitHub lookup to indeterminate instead of letting
+  // scores depend on a server's position in the queue.
+  const githubLimiter = new GithubRateLimiter();
+
   let completed = 0;
   const entries = await mapWithConcurrency(records, concurrency, async (record) => {
     const serverName = record.server.name ?? '(unnamed server)';
     let entry: McpSweepEntry;
 
     try {
-      const report = await runMcpAudit({
-        server: serverName,
-        registryUrl,
-        timeout: config.timeout,
-        record,
-      });
-      const categoryScores: Record<string, number> = {};
+      const report = await runMcpAudit(
+        {
+          server: serverName,
+          registryUrl,
+          timeout: config.timeout,
+          record,
+        },
+        { githubLimiter }
+      );
+      // A fully excluded category (weight 0) is reported as null — "we could
+      // not evaluate this" — never as a genuine score of 0.
+      const categoryScores: Record<string, number | null> = {};
       for (const category of report.categories) {
-        categoryScores[category.id] = category.score;
+        categoryScores[category.id] = category.weight === 0 ? null : category.score;
+      }
+      let notApplicableAudits = 0;
+      let indeterminateAudits = 0;
+      for (const audit of Object.values(report.audits)) {
+        if (audit.applicability === 'not-applicable') notApplicableAudits += 1;
+        if (audit.applicability === 'indeterminate') indeterminateAudits += 1;
       }
       entry = {
         server: report.server,
         serverVersion: report.serverVersion,
         score: report.score,
         categoryScores,
+        notApplicableAudits,
+        indeterminateAudits,
+        rateLimited: report.rateLimited,
       };
     } catch (err) {
       entry = {
@@ -267,6 +295,9 @@ export async function runMcpSweep(
         serverVersion: record.server.version ?? null,
         score: null,
         categoryScores: {},
+        notApplicableAudits: 0,
+        indeterminateAudits: 0,
+        rateLimited: githubLimiter.isExhausted,
         error: err instanceof Error ? err.message : 'Unknown error',
       };
     }

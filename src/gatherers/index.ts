@@ -16,8 +16,8 @@ export type { McpRegistryGatherResult, ListRegistryServersOptions } from './mcp-
 export { McpPackageGatherer } from './mcp-package.js';
 export type { McpPackageGatherResult, PackageProbe } from './mcp-package.js';
 
-export { McpRepoGatherer, parseGithubRepoUrl } from './mcp-repo.js';
+export { McpRepoGatherer, GithubRateLimiter, parseGithubRepoUrl } from './mcp-repo.js';
 export type { McpRepoGatherResult, McpReadmeProbe, McpRepoProvider } from './mcp-repo.js';
 
-export { McpRemoteGatherer } from './mcp-remote.js';
+export { McpRemoteGatherer, isPrivateHost } from './mcp-remote.js';
 export type { McpRemoteGatherResult, RemoteProbe } from './mcp-remote.js';

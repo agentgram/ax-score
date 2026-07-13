@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runMcpAudit, runMcpSweep } from './mcp-runner.js';
 
-function jsonResponse(body: unknown, status = 200): Promise<Response> {
+function jsonResponse(
+  body: unknown,
+  status = 200,
+  headers: Record<string, string> = {}
+): Promise<Response> {
+  const headerMap = new Map(Object.entries(headers));
   return Promise.resolve({
     ok: status >= 200 && status < 300,
     status,
     body: null,
+    headers: { get: (name: string) => headerMap.get(name.toLowerCase()) ?? null },
     json: () => Promise.resolve(body),
   } as unknown as Response);
 }
@@ -170,7 +176,66 @@ describe('runMcpSweep', () => {
     expect(report.entries[0]!.server).toBe('io.github.acme/todo-server');
     expect(report.entries[0]!.score).toBeGreaterThan(report.entries[1]!.score ?? 0);
     expect(report.entries[0]!.categoryScores['mcp-metadata']).toBeGreaterThan(0);
+    expect(report.entries[0]!.rateLimited).toBe(false);
     expect(progress).toHaveLength(2);
+  });
+
+  it('should report fully excluded categories as null, distinct from a genuine 0', async () => {
+    // Bare server: no packages, no remotes, no repo, no official metadata —
+    // every Distribution audit is not-applicable or indeterminate.
+    const listBody = {
+      servers: [{ server: { name: 'io.github.bare/empty', version: '0.0.1' } }],
+      metadata: { count: 1 },
+    };
+
+    mockFetchRoutes((url) => {
+      if (url.includes('/v0/servers?')) return jsonResponse(listBody);
+      return null;
+    });
+
+    const report = await runMcpSweep({ limit: 1 });
+    const entry = report.entries[0]!;
+
+    expect(entry.categoryScores['mcp-distribution']).toBeNull();
+    // Documentation genuinely fails (no repo => no docs): a real 0, not null.
+    expect(entry.categoryScores['mcp-documentation']).toBe(0);
+    expect(entry.notApplicableAudits).toBeGreaterThan(0);
+    expect(entry.indeterminateAudits).toBeGreaterThan(0);
+  });
+
+  it('should stamp rateLimited and stop hitting GitHub once the quota is exhausted', async () => {
+    const secondRecord = structuredClone(REGISTRY_RECORD);
+    secondRecord.server.name = 'io.github.acme/second-server';
+    secondRecord.server.repository = {
+      url: 'https://github.com/acme/second-server',
+      source: 'github',
+    };
+    const listBody = { servers: [REGISTRY_RECORD, secondRecord], metadata: { count: 2 } };
+    const farReset = String(Math.floor(Date.now() / 1000) + 3600);
+
+    let githubCalls = 0;
+    mockFetchRoutes((url) => {
+      if (url.includes('/v0/servers?')) return jsonResponse(listBody);
+      if (url.includes('api.github.com')) {
+        githubCalls += 1;
+        return jsonResponse({ message: 'API rate limit exceeded' }, 403, {
+          'x-ratelimit-remaining': '0',
+          'x-ratelimit-reset': farReset,
+        });
+      }
+      return null;
+    });
+
+    const report = await runMcpSweep({ limit: 2, concurrency: 1 });
+
+    // The first exhausted response short-circuits every later GitHub lookup.
+    expect(githubCalls).toBe(1);
+    expect(report.entries).toHaveLength(2);
+    for (const entry of report.entries) {
+      expect(entry.rateLimited).toBe(true);
+      expect(entry.indeterminateAudits).toBeGreaterThan(0);
+      expect(entry.score).not.toBeNull();
+    }
   });
 
   it('should surface the registry error when the sweep cannot start', async () => {

@@ -146,6 +146,8 @@ export interface McpReport {
   timestamp: string;
   version: string;
   score: number;
+  /** True when GitHub rate limiting degraded repository evidence for this audit. */
+  rateLimited: boolean;
   categories: AXCategory[];
   audits: Record<string, AuditResult>;
   recommendations: Recommendation[];
@@ -155,7 +157,18 @@ export interface McpSweepEntry {
   server: string;
   serverVersion: string | null;
   score: number | null;
-  categoryScores: Record<string, number>;
+  /**
+   * Per-category scores. `null` means the category was fully excluded from
+   * scoring (all of its audits were not-applicable or indeterminate) —
+   * distinct from a genuine score of 0.
+   */
+  categoryScores: Record<string, number | null>;
+  /** Number of audits excluded because the server had nothing to evaluate. */
+  notApplicableAudits: number;
+  /** Number of audits excluded because evidence could not be gathered. */
+  indeterminateAudits: number;
+  /** True when GitHub rate limiting degraded repository evidence for this entry. */
+  rateLimited: boolean;
   error?: string;
 }
 

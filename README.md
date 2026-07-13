@@ -130,7 +130,7 @@ The sweep fetches the latest version of each server, audits them concurrently, p
 -o, --output <file>    Write the JSON report to a file (sweep mode)
 ```
 
-Set `GITHUB_TOKEN` to raise the GitHub API rate limit during large sweeps.
+**Strongly recommended for sweeps:** set `GITHUB_TOKEN` (any classic or fine-grained token, no scopes needed) to raise the GitHub API rate limit from 60 to 5,000 requests/hour. Without it, unauthenticated sweeps exhaust the quota after ~30 servers; when that happens ax-score shares the rate-limit state across the whole sweep — it either waits for an imminent quota reset (< 2 minutes) or marks every subsequent server's repository evidence as indeterminate and stamps the affected entries with `rateLimited: true`, so scores stay position-independent and comparable.
 
 ### MCP Categories
 
@@ -142,7 +142,15 @@ Set `GITHUB_TOKEN` to raise the GitHub API rate limit during large sweeps.
 | Operational           | 15%    | Remote endpoint reachability, TLS, well-formed server record                    |
 | Documentation         | 15%    | README presence and size, detectable setup instructions                         |
 
-Evidence that cannot be gathered (e.g., a GitHub rate limit, an unsupported package registry) is marked **indeterminate** and excluded from weighting — a server is never penalized for checks we could not run.
+Evidence that cannot be gathered (e.g., a GitHub rate limit, an unsupported package registry) is marked **indeterminate** and excluded from weighting — a server is never penalized for checks we could not run. In sweep output, a category with no evaluable audits is reported as `null` in JSON and `n/a` in the leaderboard — distinct from a genuine score of 0.
+
+### Known limitations (v1)
+
+- **Text heuristics are gameable.** Description quality, README size, and usage-instruction detection are length- and keyword-based; a publisher can satisfy them with boilerplate. Treat high Metadata/Documentation scores as necessary-but-not-sufficient signals. Planned v2 corroboration: cross-checking the README against the declared tool surface, verifying config snippets actually reference the published package, and sampling tool descriptions via a live MCP handshake.
+- **Popularity and activity are proxies.** Stars and `pushed_at` indicate attention, not correctness or safety; a starless new server is not defective (it floors at a low partial score, never 0).
+- **`oci`/`mcpb`/`nuget` packages are not verified** and report as indeterminate; only npm and PyPI are checked in v1.
+- **Remote probing is shallow.** Reachability/TLS checks prove the endpoint answers HTTP; they do not perform an MCP initialize handshake (planned for v2).
+- **Non-GitHub repositories** (GitLab, Bitbucket, self-hosted) are reported as indeterminate for provenance and documentation audits.
 
 ### Programmatic MCP Usage
 

@@ -10,6 +10,8 @@ import { DEFAULT_MCP_REGISTRY_URL } from '../config/mcp.js';
 
 const OFFICIAL_META_KEY = 'io.modelcontextprotocol.registry/official';
 const PAGE_SIZE = 100;
+/** Hard cap on pagination requests per sweep (500 pages x 100 = 50k servers). */
+const MAX_PAGES = 500;
 const USER_AGENT = 'AX-Score/1.0 (mcp-audit)';
 
 export interface McpRegistryGatherResult extends GatherResult {
@@ -169,9 +171,12 @@ export async function listRegistryServers(
 
   const records: McpRegistryRecord[] = [];
   const seen = new Set<string>();
+  const seenCursors = new Set<string>();
   let cursor: string | null = null;
+  let pages = 0;
 
-  while (records.length < options.limit) {
+  while (records.length < options.limit && pages < MAX_PAGES) {
+    pages += 1;
     const pageSize = Math.min(PAGE_SIZE, options.limit - records.length);
     const params = new URLSearchParams({ version: 'latest', limit: String(pageSize) });
     if (cursor) params.set('cursor', cursor);
@@ -206,6 +211,12 @@ export async function listRegistryServers(
     if (typeof nextCursor !== 'string' || nextCursor.length === 0 || rawServers.length === 0) {
       break;
     }
+    // Guard against cyclic pagination: a cursor we have already followed
+    // (or one identical to the current cursor) would loop forever.
+    if (seenCursors.has(nextCursor)) {
+      break;
+    }
+    seenCursors.add(nextCursor);
     cursor = nextCursor;
   }
 

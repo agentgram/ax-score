@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { McpRepoGatherer, parseGithubRepoUrl } from '../mcp-repo.js';
+import { McpRepoGatherer, GithubRateLimiter, parseGithubRepoUrl } from '../mcp-repo.js';
 import type { McpRegistryGatherResult } from '../mcp-registry.js';
 
-function jsonResponse(body: unknown, status = 200): Promise<Response> {
+function jsonResponse(
+  body: unknown,
+  status = 200,
+  headers: Record<string, string> = {}
+): Promise<Response> {
+  const headerMap = new Map(Object.entries(headers));
   return Promise.resolve({
     ok: status >= 200 && status < 300,
     status,
+    headers: { get: (name: string) => headerMap.get(name.toLowerCase()) ?? null },
     json: () => Promise.resolve(body),
   } as unknown as Response);
 }
@@ -143,5 +149,75 @@ describe('McpRepoGatherer', () => {
     expect(result.provider).toBe('other');
     expect(result.checked).toBe(false);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('should stamp rateLimited on exhausted quota (403 + X-RateLimit-Remaining: 0)', async () => {
+    const farReset = String(Math.floor(Date.now() / 1000) + 3600);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      jsonResponse({ message: 'API rate limit exceeded' }, 403, {
+        'x-ratelimit-remaining': '0',
+        'x-ratelimit-reset': farReset,
+      })
+    );
+
+    const limiter = new GithubRateLimiter();
+    const result = await new McpRepoGatherer(limiter).gather(
+      { server: 'io.github.acme/todo-server' },
+      registryArtifact('https://github.com/acme/todo-server')
+    );
+
+    expect(result.checked).toBe(false);
+    expect(result.exists).toBeNull();
+    expect(result.rateLimited).toBe(true);
+    expect(limiter.isExhausted).toBe(true);
+  });
+
+  it('should skip GitHub entirely once a shared limiter is exhausted', async () => {
+    const farReset = String(Math.floor(Date.now() / 1000) + 3600);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      jsonResponse({ message: 'API rate limit exceeded' }, 403, {
+        'x-ratelimit-remaining': '0',
+        'x-ratelimit-reset': farReset,
+      })
+    );
+
+    const limiter = new GithubRateLimiter();
+    await new McpRepoGatherer(limiter).gather(
+      { server: 'io.github.acme/todo-server' },
+      registryArtifact('https://github.com/acme/todo-server')
+    );
+    const callsAfterFirst = fetchSpy.mock.calls.length;
+    expect(callsAfterFirst).toBe(1);
+
+    const second = await new McpRepoGatherer(limiter).gather(
+      { server: 'io.github.acme/other-server' },
+      registryArtifact('https://github.com/acme/other-server')
+    );
+
+    expect(fetchSpy.mock.calls.length).toBe(callsAfterFirst);
+    expect(second.checked).toBe(false);
+    expect(second.rateLimited).toBe(true);
+  });
+
+  it('should retry after an already-passed quota reset', async () => {
+    const pastReset = String(Math.floor(Date.now() / 1000) - 10);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith('/readme')) return jsonResponse(README_BODY);
+      return jsonResponse(REPO_BODY);
+    });
+
+    const limiter = new GithubRateLimiter();
+    limiter.recordExhaustion(Number.parseInt(pastReset, 10));
+
+    const result = await new McpRepoGatherer(limiter).gather(
+      { server: 'io.github.acme/todo-server' },
+      registryArtifact('https://github.com/acme/todo-server')
+    );
+
+    expect(fetchSpy).toHaveBeenCalled();
+    expect(result.checked).toBe(true);
+    expect(result.rateLimited).toBe(false);
+    expect(limiter.isExhausted).toBe(false);
   });
 });
