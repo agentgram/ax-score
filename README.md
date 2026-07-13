@@ -99,6 +99,65 @@ console.log(repeatedRun.stability);
 
 ---
 
+## 🔌 MCP Server Scoring
+
+The official [MCP Registry](https://registry.modelcontextprotocol.io) lists thousands of servers with no quality signal. The `mcp` mode scores any registered server 0-100, Lighthouse-style, using the same gather → audit → score pipeline.
+
+### Score one server
+
+```bash
+npx @agentgram/ax-score mcp io.github.domdomegg/airtable-mcp-server
+```
+
+### Sweep the registry and rank servers
+
+```bash
+npx @agentgram/ax-score mcp --sweep --limit 25 --output report.json
+```
+
+The sweep fetches the latest version of each server, audits them concurrently, prints a markdown leaderboard, and (with `--output`) writes the full JSON ranking report.
+
+### MCP CLI Options
+
+```
+[server]               Server name as registered, e.g. io.github.owner/name
+-f, --format <format>  Output format: cli, json (default: "cli")
+-t, --timeout <ms>     Request timeout in milliseconds (default: "30000")
+    --registry <url>   MCP Registry base URL
+    --sweep            Fetch servers from the registry and rank them
+    --limit <n>        Number of servers to fetch during a sweep (default: 50)
+    --concurrency <n>  Maximum concurrent server audits during a sweep (default: 5)
+-o, --output <file>    Write the JSON report to a file (sweep mode)
+```
+
+Set `GITHUB_TOKEN` to raise the GitHub API rate limit during large sweeps.
+
+### MCP Categories
+
+| Category              | Weight | Description                                                                     |
+| --------------------- | ------ | ------------------------------------------------------------------------------- |
+| Metadata Completeness | 20%    | Description quality, repository link, semver version, license, display metadata |
+| Distribution Health   | 25%    | Packages resolve on npm/PyPI, publish freshness, version consistency            |
+| Provenance & Trust    | 25%    | Repository exists and is active, namespace/repo owner alignment, adoption       |
+| Operational           | 15%    | Remote endpoint reachability, TLS, well-formed server record                    |
+| Documentation         | 15%    | README presence and size, detectable setup instructions                         |
+
+Evidence that cannot be gathered (e.g., a GitHub rate limit, an unsupported package registry) is marked **indeterminate** and excluded from weighting — a server is never penalized for checks we could not run.
+
+### Programmatic MCP Usage
+
+```typescript
+import { runMcpAudit, runMcpSweep } from '@agentgram/ax-score';
+
+const report = await runMcpAudit({ server: 'io.github.owner/name' });
+console.log(`${report.server}: ${report.score}/100`);
+
+const sweep = await runMcpSweep({ limit: 25, concurrency: 5 });
+console.log(sweep.entries.slice(0, 10));
+```
+
+---
+
 ## 📊 AX Categories
 
 | Category          | Weight | Description                                                              |
