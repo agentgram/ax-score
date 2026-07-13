@@ -1,7 +1,12 @@
 // Main API
 export { runAudit, runRepeatedAudit } from './runner.js';
-export { runMcpAudit, runMcpSweep } from './mcp-runner.js';
-export type { McpSweepConfig, McpSweepProgress, McpAuditContext } from './mcp-runner.js';
+export { runMcpAudit, runMcpStaticReport, runMcpSweep } from './mcp-runner.js';
+export type {
+  McpStaticReportConfig,
+  McpSweepConfig,
+  McpSweepProgress,
+  McpAuditContext,
+} from './mcp-runner.js';
 
 // Types
 export type {
@@ -59,10 +64,17 @@ export { McpRemoteGatherer, isPrivateHost } from './gatherers/mcp-remote.js';
 export type { McpRemoteGatherResult, RemoteProbe } from './gatherers/mcp-remote.js';
 
 // MCP config
-export { getMcpCategories, MCP_CATEGORIES, DEFAULT_MCP_REGISTRY_URL } from './config/mcp.js';
+export {
+  getMcpCategories,
+  MCP_CATEGORIES,
+  DEFAULT_MCP_REGISTRY_URL,
+  DEFAULT_MCP_REPORT_SERVERS,
+} from './config/mcp.js';
 
 // Reporters
 export { renderMcpReport, renderMcpLeaderboard } from './reporter/mcp.js';
+export { writeMcpReportFiles } from './reporter/mcp-files.js';
+export type { McpReportFilePaths } from './reporter/mcp-files.js';
 
 // Upload
 export { uploadReport } from './upload.js';

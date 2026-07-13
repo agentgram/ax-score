@@ -4,10 +4,11 @@ import { writeFileSync } from 'node:fs';
 import { Command, InvalidArgumentError } from 'commander';
 import ora from 'ora';
 import { runRepeatedAudit } from '../runner.js';
-import { runMcpAudit, runMcpSweep } from '../mcp-runner.js';
+import { runMcpAudit, runMcpStaticReport, runMcpSweep } from '../mcp-runner.js';
 import { renderReport } from '../reporter/cli.js';
 import { renderJSON } from '../reporter/json.js';
 import { renderMcpReport, renderMcpLeaderboard } from '../reporter/mcp.js';
+import { writeMcpReportFiles } from '../reporter/mcp-files.js';
 import { uploadReport } from '../upload.js';
 import { VERSION } from '../config/default.js';
 import {
@@ -33,6 +34,14 @@ interface McpCliOptions {
   limit: number;
   concurrency: number;
   output?: string;
+}
+
+interface McpReportCliOptions {
+  timeout: string;
+  registry: string;
+  concurrency: number;
+  jsonOutput: string;
+  markdownOutput: string;
 }
 
 const DEFAULT_API_URL = 'https://agentgram.co/api/v1/ax-score/scan';
@@ -182,11 +191,13 @@ program
       process.exit(1);
     }
 
-    const spinner = ora(`Auditing MCP server ${server}...`).start();
+    const serverName = server as string;
+
+    const spinner = ora(`Auditing MCP server ${serverName}...`).start();
 
     try {
       const report = await runMcpAudit({
-        server,
+        server: serverName,
         registryUrl: options.registry,
         timeout,
       });
@@ -201,7 +212,53 @@ program
 
       process.exit(report.score >= 50 ? 0 : 1);
     } catch (error) {
-      spinner.fail(`Failed to audit ${server}`);
+      spinner.fail(`Failed to audit ${serverName}`);
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('mcp-report')
+  .description('Audit the curated MCP server set and write JSON plus markdown report files')
+  .option('-t, --timeout <ms>', 'Request timeout in milliseconds', '30000')
+  .option('--registry <url>', 'MCP Registry base URL', DEFAULT_MCP_REGISTRY_URL)
+  .option(
+    '--concurrency <n>',
+    'Maximum concurrent server audits',
+    parsePositiveInteger,
+    DEFAULT_MCP_SWEEP_CONCURRENCY
+  )
+  .option('--json-output <file>', 'Path for the JSON report', 'mcp-report.json')
+  .option('--markdown-output <file>', 'Path for the markdown report', 'mcp-report.md')
+  .action(async (options: McpReportCliOptions) => {
+    const timeout = parseInt(options.timeout, 10);
+    const spinner = ora('Auditing curated MCP server set...').start();
+
+    try {
+      const report = await runMcpStaticReport(
+        {
+          registryUrl: options.registry,
+          timeout,
+          concurrency: options.concurrency,
+        },
+        (progress) => {
+          spinner.text = `Scoring curated MCP servers... ${progress.completed}/${progress.total}`;
+        }
+      );
+
+      spinner.stop();
+      writeMcpReportFiles(report, {
+        json: options.jsonOutput,
+        markdown: options.markdownOutput,
+      });
+
+      console.log(renderMcpLeaderboard(report));
+      console.error(`JSON report written to ${options.jsonOutput}`);
+      console.error(`Markdown report written to ${options.markdownOutput}`);
+      process.exit(report.scored > 0 ? 0 : 1);
+    } catch (error) {
+      spinner.fail('Curated MCP report failed');
       console.error(error instanceof Error ? error.message : String(error));
       process.exit(1);
     }

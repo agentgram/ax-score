@@ -11,6 +11,7 @@ import type { CategoryConfig } from './config/default.js';
 import { VERSION } from './config/default.js';
 import {
   DEFAULT_MCP_REGISTRY_URL,
+  DEFAULT_MCP_REPORT_SERVERS,
   DEFAULT_MCP_SWEEP_CONCURRENCY,
   getMcpCategories,
 } from './config/mcp.js';
@@ -202,6 +203,13 @@ export interface McpSweepConfig {
   concurrency?: number;
 }
 
+export interface McpStaticReportConfig {
+  registryUrl?: string;
+  timeout?: number;
+  /** Maximum concurrent server audits. Defaults to 5. */
+  concurrency?: number;
+}
+
 export interface McpSweepProgress {
   completed: number;
   total: number;
@@ -229,6 +237,53 @@ async function mapWithConcurrency<T, R>(
 
   await Promise.all(workers);
   return results;
+}
+
+function entryFromMcpReport(report: McpReport): McpSweepEntry {
+  // A fully excluded category (weight 0) is reported as null — "we could
+  // not evaluate this" — never as a genuine score of 0.
+  const categoryScores: Record<string, number | null> = {};
+  for (const category of report.categories) {
+    categoryScores[category.id] = category.weight === 0 ? null : category.score;
+  }
+  let notApplicableAudits = 0;
+  let indeterminateAudits = 0;
+  for (const audit of Object.values(report.audits)) {
+    if (audit.applicability === 'not-applicable') notApplicableAudits += 1;
+    if (audit.applicability === 'indeterminate') indeterminateAudits += 1;
+  }
+  return {
+    server: report.server,
+    serverVersion: report.serverVersion,
+    score: report.score,
+    categoryScores,
+    notApplicableAudits,
+    indeterminateAudits,
+    rateLimited: report.rateLimited,
+  };
+}
+
+function sortMcpSweepEntries(entries: McpSweepEntry[]): McpSweepEntry[] {
+  return [...entries].sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+}
+
+function buildMcpSweepReport(args: {
+  registryUrl: string;
+  requested: number;
+  entries: McpSweepEntry[];
+}): McpSweepReport {
+  const ranked = sortMcpSweepEntries(args.entries);
+  const failed = ranked.filter((e) => e.score === null).length;
+
+  return {
+    registryUrl: args.registryUrl,
+    timestamp: new Date().toISOString(),
+    version: VERSION,
+    requested: args.requested,
+    scored: ranked.length - failed,
+    failed,
+    entries: ranked,
+  };
 }
 
 /**
@@ -268,27 +323,7 @@ export async function runMcpSweep(
         },
         { githubLimiter }
       );
-      // A fully excluded category (weight 0) is reported as null — "we could
-      // not evaluate this" — never as a genuine score of 0.
-      const categoryScores: Record<string, number | null> = {};
-      for (const category of report.categories) {
-        categoryScores[category.id] = category.weight === 0 ? null : category.score;
-      }
-      let notApplicableAudits = 0;
-      let indeterminateAudits = 0;
-      for (const audit of Object.values(report.audits)) {
-        if (audit.applicability === 'not-applicable') notApplicableAudits += 1;
-        if (audit.applicability === 'indeterminate') indeterminateAudits += 1;
-      }
-      entry = {
-        server: report.server,
-        serverVersion: report.serverVersion,
-        score: report.score,
-        categoryScores,
-        notApplicableAudits,
-        indeterminateAudits,
-        rateLimited: report.rateLimited,
-      };
+      entry = entryFromMcpReport(report);
     } catch (err) {
       entry = {
         server: serverName,
@@ -307,16 +342,52 @@ export async function runMcpSweep(
     return entry;
   });
 
-  const ranked = [...entries].sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
-  const failed = ranked.filter((e) => e.score === null).length;
+  return buildMcpSweepReport({ registryUrl, requested: config.limit, entries });
+}
 
-  return {
-    registryUrl,
-    timestamp: new Date().toISOString(),
-    version: VERSION,
-    requested: config.limit,
-    scored: ranked.length - failed,
-    failed,
-    entries: ranked,
-  };
+/**
+ * Audit the curated MCP report list without auto-fetching a registry sweep.
+ */
+export async function runMcpStaticReport(
+  config: McpStaticReportConfig = {},
+  onProgress?: (progress: McpSweepProgress) => void
+): Promise<McpSweepReport> {
+  const registryUrl = (config.registryUrl ?? DEFAULT_MCP_REGISTRY_URL).replace(/\/+$/, '');
+  const concurrency = config.concurrency ?? DEFAULT_MCP_SWEEP_CONCURRENCY;
+  const servers = [...DEFAULT_MCP_REPORT_SERVERS];
+  const githubLimiter = new GithubRateLimiter();
+
+  let completed = 0;
+  const entries = await mapWithConcurrency(servers, concurrency, async (server) => {
+    let entry: McpSweepEntry;
+
+    try {
+      const report = await runMcpAudit(
+        {
+          server,
+          registryUrl,
+          timeout: config.timeout,
+        },
+        { githubLimiter }
+      );
+      entry = entryFromMcpReport(report);
+    } catch (err) {
+      entry = {
+        server,
+        serverVersion: null,
+        score: null,
+        categoryScores: {},
+        notApplicableAudits: 0,
+        indeterminateAudits: 0,
+        rateLimited: githubLimiter.isExhausted,
+        error: err instanceof Error ? err.message : 'Unknown error',
+      };
+    }
+
+    completed += 1;
+    onProgress?.({ completed, total: servers.length, server });
+    return entry;
+  });
+
+  return buildMcpSweepReport({ registryUrl, requested: servers.length, entries });
 }
