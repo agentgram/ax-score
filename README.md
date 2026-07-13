@@ -99,6 +99,73 @@ console.log(repeatedRun.stability);
 
 ---
 
+## 🔌 MCP Server Scoring
+
+The official [MCP Registry](https://registry.modelcontextprotocol.io) lists thousands of servers with no quality signal. The `mcp` mode scores any registered server 0-100, Lighthouse-style, using the same gather → audit → score pipeline.
+
+### Score one server
+
+```bash
+npx @agentgram/ax-score mcp io.github.domdomegg/airtable-mcp-server
+```
+
+### Sweep the registry and rank servers
+
+```bash
+npx @agentgram/ax-score mcp --sweep --limit 25 --output report.json
+```
+
+The sweep fetches the latest version of each server, audits them concurrently, prints a markdown leaderboard, and (with `--output`) writes the full JSON ranking report.
+
+### MCP CLI Options
+
+```
+[server]               Server name as registered, e.g. io.github.owner/name
+-f, --format <format>  Output format: cli, json (default: "cli")
+-t, --timeout <ms>     Request timeout in milliseconds (default: "30000")
+    --registry <url>   MCP Registry base URL
+    --sweep            Fetch servers from the registry and rank them
+    --limit <n>        Number of servers to fetch during a sweep (default: 50)
+    --concurrency <n>  Maximum concurrent server audits during a sweep (default: 5)
+-o, --output <file>    Write the JSON report to a file (sweep mode)
+```
+
+**Strongly recommended for sweeps:** set `GITHUB_TOKEN` (any classic or fine-grained token, no scopes needed) to raise the GitHub API rate limit from 60 to 5,000 requests/hour. Without it, unauthenticated sweeps exhaust the quota after ~30 servers; when that happens ax-score shares the rate-limit state across the whole sweep — it either waits for an imminent quota reset (< 2 minutes) or marks every subsequent server's repository evidence as indeterminate and stamps the affected entries with `rateLimited: true`, so scores stay position-independent and comparable.
+
+### MCP Categories
+
+| Category              | Weight | Description                                                                     |
+| --------------------- | ------ | ------------------------------------------------------------------------------- |
+| Metadata Completeness | 20%    | Description quality, repository link, semver version, license, display metadata |
+| Distribution Health   | 25%    | Packages resolve on npm/PyPI, publish freshness, version consistency            |
+| Provenance & Trust    | 25%    | Repository exists and is active, namespace/repo owner alignment, adoption       |
+| Operational           | 15%    | Remote endpoint reachability, TLS, well-formed server record                    |
+| Documentation         | 15%    | README presence and size, detectable setup instructions                         |
+
+Evidence that cannot be gathered (e.g., a GitHub rate limit, an unsupported package registry) is marked **indeterminate** and excluded from weighting — a server is never penalized for checks we could not run. In sweep output, a category with no evaluable audits is reported as `null` in JSON and `n/a` in the leaderboard — distinct from a genuine score of 0.
+
+### Known limitations (v1)
+
+- **Text heuristics are gameable.** Description quality, README size, and usage-instruction detection are length- and keyword-based; a publisher can satisfy them with boilerplate. Treat high Metadata/Documentation scores as necessary-but-not-sufficient signals. Planned v2 corroboration: cross-checking the README against the declared tool surface, verifying config snippets actually reference the published package, and sampling tool descriptions via a live MCP handshake.
+- **Popularity and activity are proxies.** Stars and `pushed_at` indicate attention, not correctness or safety; a starless new server is not defective (it floors at a low partial score, never 0).
+- **`oci`/`mcpb`/`nuget` packages are not verified** and report as indeterminate; only npm and PyPI are checked in v1.
+- **Remote probing is shallow.** Reachability/TLS checks prove the endpoint answers HTTP; they do not perform an MCP initialize handshake (planned for v2).
+- **Non-GitHub repositories** (GitLab, Bitbucket, self-hosted) are reported as indeterminate for provenance and documentation audits.
+
+### Programmatic MCP Usage
+
+```typescript
+import { runMcpAudit, runMcpSweep } from '@agentgram/ax-score';
+
+const report = await runMcpAudit({ server: 'io.github.owner/name' });
+console.log(`${report.server}: ${report.score}/100`);
+
+const sweep = await runMcpSweep({ limit: 25, concurrency: 5 });
+console.log(sweep.entries.slice(0, 10));
+```
+
+---
+
 ## 📊 AX Categories
 
 | Category          | Weight | Description                                                              |
