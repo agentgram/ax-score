@@ -117,6 +117,14 @@ npx @agentgram/ax-score mcp --sweep --limit 25 --output report.json
 
 The sweep fetches the latest version of each server, audits them concurrently, prints a markdown leaderboard, and (with `--output`) writes the full JSON ranking report.
 
+### Write the bounded strategic MCP report
+
+```bash
+npx @agentgram/ax-score mcp-report --json-output reports/mcp-report.json --markdown-output reports/mcp-report.md
+```
+
+`mcp-report` audits a small curated list of MCP servers (no registry sweep or automatic discovery) and writes both a machine-readable JSON report and a markdown leaderboard for sharing.
+
 ### MCP CLI Options
 
 ```
@@ -128,6 +136,17 @@ The sweep fetches the latest version of each server, audits them concurrently, p
     --limit <n>        Number of servers to fetch during a sweep (default: 50)
     --concurrency <n>  Maximum concurrent server audits during a sweep (default: 5)
 -o, --output <file>    Write the JSON report to a file (sweep mode)
+```
+
+### MCP report CLI Options
+
+```
+-t, --timeout <ms>        Request timeout in milliseconds (default: "30000")
+    --registry <url>      MCP Registry base URL
+    --concurrency <n>     Maximum concurrent server audits (default: 5)
+    --json-output <file>  Path for the JSON report (default: mcp-report.json)
+    --markdown-output <file>
+                          Path for the markdown report (default: mcp-report.md)
 ```
 
 **Strongly recommended for sweeps:** set `GITHUB_TOKEN` (any classic or fine-grained token, no scopes needed) to raise the GitHub API rate limit from 60 to 5,000 requests/hour. Without it, unauthenticated sweeps exhaust the quota after ~30 servers; when that happens ax-score shares the rate-limit state across the whole sweep — it either waits for an imminent quota reset (< 2 minutes) or marks every subsequent server's repository evidence as indeterminate and stamps the affected entries with `rateLimited: true`, so scores stay position-independent and comparable.
