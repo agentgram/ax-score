@@ -1,0 +1,139 @@
+import chalk from 'chalk';
+import type { AuditResult, McpReport, McpSweepReport } from '../types.js';
+import { MCP_CATEGORIES } from '../config/mcp.js';
+
+function getScoreColor(score: number): (text: string) => string {
+  if (score >= 90) return chalk.green;
+  if (score >= 50) return chalk.yellow;
+  return chalk.red;
+}
+
+function getScoreLabel(score: number): string {
+  if (score >= 90) return 'PASS';
+  if (score >= 50) return 'WARN';
+  return 'FAIL';
+}
+
+function renderProgressBar(score: number, width = 20): string {
+  const filled = Math.round((score / 100) * width);
+  const empty = width - filled;
+  const color = getScoreColor(score);
+  return color('█'.repeat(filled)) + chalk.gray('░'.repeat(empty));
+}
+
+function countExcluded(audits: Record<string, AuditResult>): {
+  notApplicable: number;
+  indeterminate: number;
+} {
+  let notApplicable = 0;
+  let indeterminate = 0;
+  for (const result of Object.values(audits)) {
+    if (result.applicability === 'not-applicable') notApplicable += 1;
+    if (result.applicability === 'indeterminate') indeterminate += 1;
+  }
+  return { notApplicable, indeterminate };
+}
+
+/**
+ * Render an MCP audit report as rich CLI output.
+ */
+export function renderMcpReport(report: McpReport): string {
+  const lines: string[] = [];
+
+  lines.push('');
+  lines.push(
+    chalk.bold(
+      `  AX Score (MCP): ${getScoreColor(report.score)(`${report.score}/100`)} ${renderProgressBar(report.score)}`
+    )
+  );
+  lines.push('');
+  lines.push(chalk.gray(`  ${report.server}${report.serverVersion ? ` v${report.serverVersion}` : ''}`));
+  lines.push(chalk.gray(`  Registry: ${report.registryUrl}`));
+  lines.push(chalk.gray(`  Scanned at ${new Date(report.timestamp).toLocaleString()}`));
+  lines.push('');
+
+  for (const category of report.categories) {
+    if (category.weight === 0) {
+      lines.push(`  ${'[SKIP]'.padEnd(8)} ${category.title.padEnd(24)} ${chalk.gray('n/a')}`);
+      continue;
+    }
+    const label = `[${getScoreLabel(category.score)}]`;
+    const score = getScoreColor(category.score)(`${category.score}/100`);
+    lines.push(`  ${label.padEnd(8)} ${category.title.padEnd(24)} ${score}`);
+  }
+
+  const excluded = countExcluded(report.audits);
+  if (excluded.notApplicable > 0 || excluded.indeterminate > 0) {
+    lines.push('');
+    lines.push(
+      chalk.gray(
+        `  Excluded from scoring: ${excluded.notApplicable} not applicable, ` +
+          `${excluded.indeterminate} indeterminate (evidence unavailable).`
+      )
+    );
+  }
+
+  if (report.recommendations.length > 0) {
+    lines.push('');
+    lines.push(chalk.bold('  Top Fixes:'));
+    const top3 = report.recommendations.slice(0, 3);
+    for (let i = 0; i < top3.length; i++) {
+      const rec = top3[i]!;
+      lines.push(`  ${i + 1}. ${rec.message}  ${chalk.green(`(+${rec.impact} pts)`)}`);
+    }
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+function escapeMarkdown(text: string): string {
+  return text.replace(/\|/g, '\\|');
+}
+
+/**
+ * Render a sweep report as a markdown leaderboard table.
+ */
+export function renderMcpLeaderboard(report: McpSweepReport): string {
+  const lines: string[] = [];
+  const categoryColumns = MCP_CATEGORIES.map((c) => ({ id: c.id, title: c.title }));
+
+  lines.push('# MCP Server Leaderboard');
+  lines.push('');
+  lines.push(
+    `Scored ${report.scored} of ${report.requested} requested servers` +
+      (report.failed > 0 ? ` (${report.failed} failed)` : '') +
+      ` — registry: ${report.registryUrl} — ${report.timestamp}`
+  );
+  lines.push('');
+  lines.push(
+    `| # | Server | Score | ${categoryColumns.map((c) => c.title).join(' | ')} |`
+  );
+  lines.push(`|--:|:-------|------:|${categoryColumns.map(() => '----:').join('|')}|`);
+
+  let rank = 0;
+  for (const entry of report.entries) {
+    if (entry.score === null) continue;
+    rank += 1;
+    const categoryCells = categoryColumns.map((col) => {
+      const score = entry.categoryScores[col.id];
+      return score === undefined ? 'n/a' : String(score);
+    });
+    lines.push(
+      `| ${rank} | ${escapeMarkdown(entry.server)} | **${entry.score}** | ${categoryCells.join(' | ')} |`
+    );
+  }
+
+  const failures = report.entries.filter((entry) => entry.score === null);
+  if (failures.length > 0) {
+    lines.push('');
+    lines.push('## Not scored');
+    lines.push('');
+    for (const entry of failures) {
+      lines.push(`- ${escapeMarkdown(entry.server)}: ${entry.error ?? 'unknown error'}`);
+    }
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
