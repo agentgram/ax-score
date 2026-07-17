@@ -120,6 +120,37 @@ describe('listRegistryServers', () => {
     expect(String(fetchSpy.mock.calls[0]?.[0])).toContain('version=latest');
   });
 
+  it('should retry transient registry pagination failures with configured backoff', async () => {
+    let calls = 0;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      calls += 1;
+      if (calls === 1) return jsonResponse({ error: 'try again' }, 503);
+      return jsonResponse({ servers: [{ server: { name: 'io.github.a/one' } }], metadata: {} });
+    });
+
+    const records = await listRegistryServers({ limit: 1, retries: 1, retryBackoffMs: 0 });
+
+    expect(records.map((r) => r.server.name)).toEqual(['io.github.a/one']);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('should honor the configured page size while following cursors', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes('cursor=cursor-1')) {
+        return jsonResponse({ servers: [{ server: { name: 'io.github.b/two' } }], metadata: {} });
+      }
+      return jsonResponse({
+        servers: [{ server: { name: 'io.github.a/one' } }],
+        metadata: { nextCursor: 'cursor-1' },
+      });
+    });
+
+    const records = await listRegistryServers({ limit: 2, pageSize: 1 });
+
+    expect(records.map((r) => r.server.name)).toEqual(['io.github.a/one', 'io.github.b/two']);
+  });
+
   it('should stop at the requested limit', async () => {
     const page = {
       servers: [

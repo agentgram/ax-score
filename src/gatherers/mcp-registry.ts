@@ -13,6 +13,8 @@ const PAGE_SIZE = 100;
 /** Hard cap on pagination requests per sweep (500 pages x 100 = 50k servers). */
 const MAX_PAGES = 500;
 const USER_AGENT = 'AX-Score/1.0 (mcp-audit)';
+const DEFAULT_RETRIES = 2;
+const DEFAULT_RETRY_BACKOFF_MS = 250;
 
 export interface McpRegistryGatherResult extends GatherResult {
   registryUrl: string;
@@ -29,26 +31,60 @@ interface JsonProbe {
   body: unknown;
 }
 
-async function fetchJson(url: string, timeout: number): Promise<JsonProbe | null> {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
-    });
-    clearTimeout(timer);
+interface FetchJsonOptions {
+  timeout: number;
+  retries?: number;
+  retryBackoffMs?: number;
+}
 
-    let body: unknown = null;
-    try {
-      body = await res.json();
-    } catch {
-      body = null;
+function shouldRetryStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function retryDelay(attempt: number, backoffMs: number): number {
+  return Math.max(0, backoffMs) * 2 ** Math.max(0, attempt - 1);
+}
+
+async function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchJson(url: string, options: FetchJsonOptions): Promise<JsonProbe | null> {
+  const attempts = Math.max(0, options.retries ?? DEFAULT_RETRIES) + 1;
+  try {
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), options.timeout);
+      try {
+        const res = await fetch(url, {
+          signal: controller.signal,
+          headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+        });
+        clearTimeout(timer);
+
+        let body: unknown = null;
+        try {
+          body = await res.json();
+        } catch {
+          body = null;
+        }
+
+        const probe = { ok: res.ok, status: res.status, body };
+        if (!shouldRetryStatus(res.status) || attempt === attempts) {
+          return probe;
+        }
+      } catch {
+        clearTimeout(timer);
+        if (attempt === attempts) return null;
+      }
+
+      await sleep(retryDelay(attempt, options.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS));
     }
-    return { ok: res.ok, status: res.status, body };
   } catch {
     return null;
   }
+  return null;
 }
 
 function normalizeBaseUrl(registryUrl: string): string {
@@ -99,7 +135,7 @@ export class McpRegistryGatherer {
 
     const timeout = config.timeout ?? DEFAULT_TIMEOUT;
     const url = `${registryUrl}/v0/servers/${encodeURIComponent(config.server)}/versions/latest`;
-    const res = await fetchJson(url, timeout);
+    const res = await fetchJson(url, { timeout });
 
     if (!res) {
       return {
@@ -156,6 +192,12 @@ export interface ListRegistryServersOptions {
   limit: number;
   registryUrl?: string;
   timeout?: number;
+  /** Maximum number of servers requested per Registry API page. */
+  pageSize?: number;
+  /** Number of retries for transient registry failures (network/408/429/5xx). */
+  retries?: number;
+  /** Initial exponential backoff delay in milliseconds. */
+  retryBackoffMs?: number;
 }
 
 /**
@@ -168,6 +210,7 @@ export async function listRegistryServers(
 ): Promise<McpRegistryRecord[]> {
   const registryUrl = normalizeBaseUrl(options.registryUrl ?? DEFAULT_MCP_REGISTRY_URL);
   const timeout = options.timeout ?? DEFAULT_TIMEOUT;
+  const configuredPageSize = Math.max(1, Math.min(PAGE_SIZE, options.pageSize ?? PAGE_SIZE));
 
   const records: McpRegistryRecord[] = [];
   const seen = new Set<string>();
@@ -177,11 +220,15 @@ export async function listRegistryServers(
 
   while (records.length < options.limit && pages < MAX_PAGES) {
     pages += 1;
-    const pageSize = Math.min(PAGE_SIZE, options.limit - records.length);
+    const pageSize = Math.min(configuredPageSize, options.limit - records.length);
     const params = new URLSearchParams({ version: 'latest', limit: String(pageSize) });
     if (cursor) params.set('cursor', cursor);
 
-    const res = await fetchJson(`${registryUrl}/v0/servers?${params.toString()}`, timeout);
+    const res = await fetchJson(`${registryUrl}/v0/servers?${params.toString()}`, {
+      timeout,
+      retries: options.retries,
+      retryBackoffMs: options.retryBackoffMs,
+    });
     if (!res) {
       throw new Error('MCP Registry was unreachable.');
     }

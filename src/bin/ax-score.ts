@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { Command, InvalidArgumentError } from 'commander';
 import ora from 'ora';
 import { runRepeatedAudit } from '../runner.js';
@@ -11,6 +11,7 @@ import { renderMcpReport, renderMcpLeaderboard } from '../reporter/mcp.js';
 import { writeMcpReportFiles } from '../reporter/mcp-files.js';
 import { uploadReport } from '../upload.js';
 import { VERSION } from '../config/default.js';
+import type { McpSweepReport } from '../types.js';
 import {
   DEFAULT_MCP_REGISTRY_URL,
   DEFAULT_MCP_SWEEP_CONCURRENCY,
@@ -32,6 +33,9 @@ interface McpCliOptions {
   registry: string;
   sweep: boolean;
   limit: number;
+  pageSize: number;
+  retries: number;
+  retryBackoffMs: number;
   concurrency: number;
   output?: string;
 }
@@ -39,6 +43,11 @@ interface McpCliOptions {
 interface McpReportCliOptions {
   timeout: string;
   registry: string;
+  limit: number;
+  pageSize: number;
+  retries: number;
+  retryBackoffMs: number;
+  resume: boolean;
   concurrency: number;
   jsonOutput: string;
   markdownOutput: string;
@@ -46,6 +55,15 @@ interface McpReportCliOptions {
 
 const DEFAULT_API_URL = 'https://agentgram.co/api/v1/ax-score/scan';
 const DEFAULT_SWEEP_LIMIT = 50;
+
+function readResumeReport(path: string): McpSweepReport | undefined {
+  if (!existsSync(path)) return undefined;
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<McpSweepReport>;
+  if (!Array.isArray(parsed.entries)) {
+    throw new Error(`Resume report ${path} does not contain an entries array.`);
+  }
+  return parsed as McpSweepReport;
+}
 
 const program = new Command();
 
@@ -139,6 +157,14 @@ program
     parsePositiveInteger,
     DEFAULT_SWEEP_LIMIT
   )
+  .option('--page-size <n>', 'Registry API page size for sweep pagination', parsePositiveInteger, 100)
+  .option('--retries <n>', 'Retries for transient Registry API failures', parseNonNegativeInteger, 2)
+  .option(
+    '--retry-backoff-ms <ms>',
+    'Initial retry backoff in milliseconds for Registry API failures',
+    parseNonNegativeInteger,
+    250
+  )
   .option(
     '--concurrency <n>',
     'Maximum concurrent server audits during a sweep',
@@ -158,6 +184,9 @@ program
             limit: options.limit,
             registryUrl: options.registry,
             timeout,
+            pageSize: options.pageSize,
+            retries: options.retries,
+            retryBackoffMs: options.retryBackoffMs,
             concurrency: options.concurrency,
           },
           (progress) => {
@@ -220,9 +249,24 @@ program
 
 program
   .command('mcp-report')
-  .description('Audit the curated MCP server set and write JSON plus markdown report files')
+  .description('Audit a bounded MCP Registry API sweep and write JSON plus markdown report files')
   .option('-t, --timeout <ms>', 'Request timeout in milliseconds', '30000')
   .option('--registry <url>', 'MCP Registry base URL', DEFAULT_MCP_REGISTRY_URL)
+  .option(
+    '--limit <n>',
+    'Number of servers to fetch from the official Registry API',
+    parsePositiveInteger,
+    DEFAULT_SWEEP_LIMIT
+  )
+  .option('--page-size <n>', 'Registry API page size for pagination', parsePositiveInteger, 100)
+  .option('--retries <n>', 'Retries for transient Registry API failures', parseNonNegativeInteger, 2)
+  .option(
+    '--retry-backoff-ms <ms>',
+    'Initial retry backoff in milliseconds for Registry API failures',
+    parseNonNegativeInteger,
+    250
+  )
+  .option('--resume', 'Resume from the existing JSON output file when present', false)
   .option(
     '--concurrency <n>',
     'Maximum concurrent server audits',
@@ -233,17 +277,23 @@ program
   .option('--markdown-output <file>', 'Path for the markdown report', 'mcp-report.md')
   .action(async (options: McpReportCliOptions) => {
     const timeout = parseInt(options.timeout, 10);
-    const spinner = ora('Auditing curated MCP server set...').start();
+    const spinner = ora(`Auditing ${options.limit} MCP Registry servers...`).start();
 
     try {
+      const resumeFrom = options.resume ? readResumeReport(options.jsonOutput) : undefined;
       const report = await runMcpStaticReport(
         {
           registryUrl: options.registry,
           timeout,
+          limit: options.limit,
+          pageSize: options.pageSize,
+          retries: options.retries,
+          retryBackoffMs: options.retryBackoffMs,
+          resumeFrom,
           concurrency: options.concurrency,
         },
         (progress) => {
-          spinner.text = `Scoring curated MCP servers... ${progress.completed}/${progress.total}`;
+          spinner.text = `Scoring MCP Registry servers... ${progress.completed}/${progress.total}`;
         }
       );
 
@@ -271,6 +321,16 @@ function parsePositiveInteger(value: string): number {
 
   if (!Number.isInteger(parsed) || parsed < 1) {
     throw new InvalidArgumentError('value must be a positive integer');
+  }
+
+  return parsed;
+}
+
+function parseNonNegativeInteger(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new InvalidArgumentError('value must be a non-negative integer');
   }
 
   return parsed;

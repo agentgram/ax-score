@@ -11,7 +11,6 @@ import type { CategoryConfig } from './config/default.js';
 import { VERSION } from './config/default.js';
 import {
   DEFAULT_MCP_REGISTRY_URL,
-  DEFAULT_MCP_REPORT_SERVERS,
   DEFAULT_MCP_SWEEP_CONCURRENCY,
   getMcpCategories,
 } from './config/mcp.js';
@@ -199,6 +198,14 @@ export interface McpSweepConfig {
   limit: number;
   registryUrl?: string;
   timeout?: number;
+  /** Maximum number of registry entries requested per page. */
+  pageSize?: number;
+  /** Number of retries for transient registry pagination failures. */
+  retries?: number;
+  /** Initial exponential backoff delay in milliseconds. */
+  retryBackoffMs?: number;
+  /** Existing report to preserve and resume from. Entries are de-duplicated by server. */
+  resumeFrom?: McpSweepReport;
   /** Maximum concurrent server audits. Defaults to 5. */
   concurrency?: number;
 }
@@ -206,6 +213,16 @@ export interface McpSweepConfig {
 export interface McpStaticReportConfig {
   registryUrl?: string;
   timeout?: number;
+  /** Number of servers to fetch from the official Registry API. Defaults to 50. */
+  limit?: number;
+  /** Maximum number of registry entries requested per page. */
+  pageSize?: number;
+  /** Number of retries for transient registry pagination failures. */
+  retries?: number;
+  /** Initial exponential backoff delay in milliseconds. */
+  retryBackoffMs?: number;
+  /** Existing report to preserve and resume from. Entries are de-duplicated by server. */
+  resumeFrom?: McpSweepReport;
   /** Maximum concurrent server audits. Defaults to 5. */
   concurrency?: number;
 }
@@ -296,11 +313,20 @@ export async function runMcpSweep(
 ): Promise<McpSweepReport> {
   const registryUrl = (config.registryUrl ?? DEFAULT_MCP_REGISTRY_URL).replace(/\/+$/, '');
   const concurrency = config.concurrency ?? DEFAULT_MCP_SWEEP_CONCURRENCY;
+  const resumedEntries = config.resumeFrom?.entries ?? [];
+  const resumedServers = new Set(resumedEntries.map((entry) => entry.server));
 
   const records = await listRegistryServers({
     limit: config.limit,
     registryUrl,
     timeout: config.timeout,
+    pageSize: config.pageSize,
+    retries: config.retries,
+    retryBackoffMs: config.retryBackoffMs,
+  });
+  const pendingRecords = records.filter((record) => {
+    const serverName = record.server.name ?? '';
+    return serverName.length === 0 || !resumedServers.has(serverName);
   });
 
   // One limiter for the whole sweep: the first exhausted-quota response
@@ -308,8 +334,8 @@ export async function runMcpSweep(
   // scores depend on a server's position in the queue.
   const githubLimiter = new GithubRateLimiter();
 
-  let completed = 0;
-  const entries = await mapWithConcurrency(records, concurrency, async (record) => {
+  let completed = resumedEntries.length;
+  const newEntries = await mapWithConcurrency(pendingRecords, concurrency, async (record) => {
     const serverName = record.server.name ?? '(unnamed server)';
     let entry: McpSweepEntry;
 
@@ -342,52 +368,32 @@ export async function runMcpSweep(
     return entry;
   });
 
+  const entries = [...resumedEntries, ...newEntries];
   return buildMcpSweepReport({ registryUrl, requested: config.limit, entries });
 }
 
 /**
- * Audit the curated MCP report list without auto-fetching a registry sweep.
+ * Audit a bounded MCP Registry API report with pagination.
+ *
+ * The public name is kept for compatibility with earlier report automation,
+ * but the implementation now uses the official paginated Registry API rather
+ * than a curated hardcoded server list.
  */
 export async function runMcpStaticReport(
   config: McpStaticReportConfig = {},
   onProgress?: (progress: McpSweepProgress) => void
 ): Promise<McpSweepReport> {
-  const registryUrl = (config.registryUrl ?? DEFAULT_MCP_REGISTRY_URL).replace(/\/+$/, '');
-  const concurrency = config.concurrency ?? DEFAULT_MCP_SWEEP_CONCURRENCY;
-  const servers = [...DEFAULT_MCP_REPORT_SERVERS];
-  const githubLimiter = new GithubRateLimiter();
-
-  let completed = 0;
-  const entries = await mapWithConcurrency(servers, concurrency, async (server) => {
-    let entry: McpSweepEntry;
-
-    try {
-      const report = await runMcpAudit(
-        {
-          server,
-          registryUrl,
-          timeout: config.timeout,
-        },
-        { githubLimiter }
-      );
-      entry = entryFromMcpReport(report);
-    } catch (err) {
-      entry = {
-        server,
-        serverVersion: null,
-        score: null,
-        categoryScores: {},
-        notApplicableAudits: 0,
-        indeterminateAudits: 0,
-        rateLimited: githubLimiter.isExhausted,
-        error: err instanceof Error ? err.message : 'Unknown error',
-      };
-    }
-
-    completed += 1;
-    onProgress?.({ completed, total: servers.length, server });
-    return entry;
-  });
-
-  return buildMcpSweepReport({ registryUrl, requested: servers.length, entries });
+  return runMcpSweep(
+    {
+      limit: config.limit ?? 50,
+      registryUrl: config.registryUrl,
+      timeout: config.timeout,
+      pageSize: config.pageSize,
+      retries: config.retries,
+      retryBackoffMs: config.retryBackoffMs,
+      resumeFrom: config.resumeFrom,
+      concurrency: config.concurrency,
+    },
+    onProgress
+  );
 }
