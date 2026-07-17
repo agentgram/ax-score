@@ -120,10 +120,10 @@ The sweep fetches the latest version of each server, audits them concurrently, p
 ### Write the bounded strategic MCP report
 
 ```bash
-npx @agentgram/ax-score mcp-report --json-output reports/mcp-report.json --markdown-output reports/mcp-report.md
+npx @agentgram/ax-score mcp-report --limit 50 --resume --json-output reports/mcp-report.json --markdown-output reports/mcp-report.md
 ```
 
-`mcp-report` audits a small curated list of MCP servers (no registry sweep or automatic discovery) and writes both a machine-readable JSON report and a markdown leaderboard for sharing.
+`mcp-report` fetches the latest MCP servers from the official Registry API using cursor pagination, audits them concurrently, and writes both a machine-readable JSON report and a markdown leaderboard for sharing. Use `--resume` to keep entries already present in the JSON output file and continue scoring only missing registry records.
 
 ### MCP CLI Options
 
@@ -134,6 +134,10 @@ npx @agentgram/ax-score mcp-report --json-output reports/mcp-report.json --markd
     --registry <url>   MCP Registry base URL
     --sweep            Fetch servers from the registry and rank them
     --limit <n>        Number of servers to fetch during a sweep (default: 50)
+    --page-size <n>    Registry API page size for sweep pagination (default: 100)
+    --retries <n>      Retries for transient Registry API failures (default: 2)
+    --retry-backoff-ms <ms>
+                         Initial retry backoff in milliseconds for Registry API failures (default: 250)
     --concurrency <n>  Maximum concurrent server audits during a sweep (default: 5)
 -o, --output <file>    Write the JSON report to a file (sweep mode)
 ```
@@ -143,6 +147,12 @@ npx @agentgram/ax-score mcp-report --json-output reports/mcp-report.json --markd
 ```
 -t, --timeout <ms>        Request timeout in milliseconds (default: "30000")
     --registry <url>      MCP Registry base URL
+    --limit <n>           Number of servers to fetch from the official Registry API (default: 50)
+    --page-size <n>       Registry API page size for pagination (default: 100)
+    --retries <n>         Retries for transient Registry API failures (default: 2)
+    --retry-backoff-ms <ms>
+                          Initial retry backoff in milliseconds for Registry API failures (default: 250)
+    --resume              Resume from the existing JSON output file when present
     --concurrency <n>     Maximum concurrent server audits (default: 5)
     --json-output <file>  Path for the JSON report (default: mcp-report.json)
     --markdown-output <file>

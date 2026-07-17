@@ -68,7 +68,6 @@ export {
   getMcpCategories,
   MCP_CATEGORIES,
   DEFAULT_MCP_REGISTRY_URL,
-  DEFAULT_MCP_REPORT_SERVERS,
 } from './config/mcp.js';
 
 // Reporters

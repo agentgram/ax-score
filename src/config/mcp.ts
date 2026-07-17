@@ -7,20 +7,6 @@ export const DEFAULT_MCP_REGISTRY_URL = 'https://registry.modelcontextprotocol.i
 export const DEFAULT_MCP_SWEEP_CONCURRENCY = 5;
 
 /**
- * Bounded, curated MCP server set used by the static report CLI.
- *
- * This intentionally avoids crawling the Registry API. The list is small enough
- * for a quick strategic report while still covering package, repository, and
- * remote-endpoint evidence when the server records declare it.
- */
-export const DEFAULT_MCP_REPORT_SERVERS = [
-  'io.github.github/github-mcp-server',
-  'io.github.domdomegg/airtable-mcp-server',
-  'ac.tandem/docs-mcp',
-  'ai.agenttrust/mcp-server',
-] as const;
-
-/**
  * Category definitions for MCP server scoring.
  *
  * Category weights sum to 100. Audit ref weights are relative within each
