@@ -181,3 +181,40 @@ export interface McpSweepReport {
   failed: number;
   entries: McpSweepEntry[];
 }
+
+export interface McpSweepScoreChange {
+  server: string;
+  previousScore: number | null;
+  currentScore: number | null;
+  delta: number | null;
+}
+
+export interface McpSweepDiff {
+  previousTimestamp: string;
+  currentTimestamp: string;
+  requestedDelta: number;
+  scoredDelta: number;
+  failedDelta: number;
+  addedServers: string[];
+  removedServers: string[];
+  scoreChanges: McpSweepScoreChange[];
+}
+
+export interface McpReportPublishedUrls {
+  json?: string;
+  markdown?: string;
+  manifest?: string;
+}
+
+export interface McpReportArtifactManifest {
+  generatedAt: string;
+  registryUrl: string;
+  reportTimestamp: string;
+  files: {
+    json: string;
+    markdown: string;
+    manifest?: string;
+  };
+  hostedUrls?: McpReportPublishedUrls;
+  diff?: McpSweepDiff;
+}

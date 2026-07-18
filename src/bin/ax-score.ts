@@ -51,6 +51,9 @@ interface McpReportCliOptions {
   concurrency: number;
   jsonOutput: string;
   markdownOutput: string;
+  manifestOutput?: string;
+  diffFrom?: string;
+  publishedBaseUrl?: string;
 }
 
 const DEFAULT_API_URL = 'https://agentgram.co/api/v1/ax-score/scan';
@@ -275,12 +278,18 @@ program
   )
   .option('--json-output <file>', 'Path for the JSON report', 'mcp-report.json')
   .option('--markdown-output <file>', 'Path for the markdown report', 'mcp-report.md')
+  .option('--manifest-output <file>', 'Path for a scheduled artifact manifest JSON file')
+  .option('--diff-from <file>', 'Previous JSON report to compare against for historical diffs')
+  .option('--published-base-url <url>', 'Hosted base URL where report artifacts will be published')
   .action(async (options: McpReportCliOptions) => {
     const timeout = parseInt(options.timeout, 10);
     const spinner = ora(`Auditing ${options.limit} MCP Registry servers...`).start();
 
     try {
       const resumeFrom = options.resume ? readResumeReport(options.jsonOutput) : undefined;
+      const previousReport = options.diffFrom
+        ? readResumeReport(options.diffFrom)
+        : resumeFrom;
       const report = await runMcpStaticReport(
         {
           registryUrl: options.registry,
@@ -301,11 +310,18 @@ program
       writeMcpReportFiles(report, {
         json: options.jsonOutput,
         markdown: options.markdownOutput,
+        manifest: options.manifestOutput,
+      }, {
+        previousReport,
+        publishedBaseUrl: options.publishedBaseUrl,
       });
 
       console.log(renderMcpLeaderboard(report));
       console.error(`JSON report written to ${options.jsonOutput}`);
       console.error(`Markdown report written to ${options.markdownOutput}`);
+      if (options.manifestOutput) {
+        console.error(`Artifact manifest written to ${options.manifestOutput}`);
+      }
       process.exit(report.scored > 0 ? 0 : 1);
     } catch (error) {
       spinner.fail('Curated MCP report failed');

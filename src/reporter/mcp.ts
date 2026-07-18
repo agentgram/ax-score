@@ -1,5 +1,11 @@
 import chalk from 'chalk';
-import type { AuditResult, McpReport, McpSweepReport } from '../types.js';
+import type {
+  AuditResult,
+  McpReport,
+  McpReportPublishedUrls,
+  McpSweepDiff,
+  McpSweepReport,
+} from '../types.js';
 import { MCP_CATEGORIES } from '../config/mcp.js';
 
 function getScoreColor(score: number): (text: string) => string {
@@ -101,10 +107,22 @@ function escapeMarkdown(text: string): string {
   return text.replace(/\|/g, '\\|');
 }
 
+function formatSignedNumber(value: number): string {
+  return value > 0 ? `+${value}` : String(value);
+}
+
+export interface McpLeaderboardRenderOptions {
+  diff?: McpSweepDiff;
+  hostedUrls?: McpReportPublishedUrls;
+}
+
 /**
  * Render a sweep report as a markdown leaderboard table.
  */
-export function renderMcpLeaderboard(report: McpSweepReport): string {
+export function renderMcpLeaderboard(
+  report: McpSweepReport,
+  options: McpLeaderboardRenderOptions = {}
+): string {
   const lines: string[] = [];
   const categoryColumns = MCP_CATEGORIES.map((c) => ({ id: c.id, title: c.title }));
 
@@ -116,6 +134,39 @@ export function renderMcpLeaderboard(report: McpSweepReport): string {
       ` — registry: ${report.registryUrl} — ${report.timestamp}`
   );
   lines.push('');
+
+  const hostedLinks = Object.entries(options.hostedUrls ?? {}).filter((entry) => entry[1]);
+  if (hostedLinks.length > 0) {
+    lines.push('## Hosted artifacts');
+    lines.push('');
+    for (const [label, url] of hostedLinks) {
+      lines.push(`- ${label}: ${url}`);
+    }
+    lines.push('');
+  }
+
+  if (options.diff) {
+    lines.push('## Historical diff');
+    lines.push('');
+    lines.push(
+      `Compared with ${options.diff.previousTimestamp}: ` +
+        `${formatSignedNumber(options.diff.scoredDelta)} scored, ` +
+        `${formatSignedNumber(options.diff.failedDelta)} failed, ` +
+        `${options.diff.addedServers.length} added, ` +
+        `${options.diff.removedServers.length} removed.`
+    );
+    const notableChanges = options.diff.scoreChanges.slice(0, 5);
+    if (notableChanges.length > 0) {
+      lines.push('');
+      for (const change of notableChanges) {
+        const delta = change.delta === null ? 'n/a' : formatSignedNumber(change.delta);
+        lines.push(
+          `- ${escapeMarkdown(change.server)}: ${change.previousScore ?? 'n/a'} → ${change.currentScore ?? 'n/a'} (${delta})`
+        );
+      }
+    }
+    lines.push('');
+  }
   lines.push(
     `| # | Server | Score | ${categoryColumns.map((c) => c.title).join(' | ')} |`
   );
