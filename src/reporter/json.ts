@@ -1,8 +1,10 @@
-import type { AXReport, McpReport, McpSweepReport } from '../types.js';
+import type { AXReport, McpReport, McpReportArtifactManifest, McpSweepReport } from '../types.js';
 
 /**
  * Render a report as formatted JSON.
  */
-export function renderJSON(report: AXReport | McpReport | McpSweepReport): string {
+export function renderJSON(
+  report: AXReport | McpReport | McpSweepReport | McpReportArtifactManifest
+): string {
   return JSON.stringify(report, null, 2);
 }

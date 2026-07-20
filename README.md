@@ -125,6 +125,20 @@ npx @agentgram/ax-score mcp-report --limit 50 --resume --json-output reports/mcp
 
 `mcp-report` fetches the latest MCP servers from the official Registry API using cursor pagination, audits them concurrently, and writes both a machine-readable JSON report and a markdown leaderboard for sharing. Use `--resume` to keep entries already present in the JSON output file and continue scoring only missing registry records.
 
+For scheduled jobs that publish reports to Pages, S3, or another static host, add `--manifest-output`, `--diff-from`, and `--published-base-url`:
+
+```bash
+npx @agentgram/ax-score mcp-report \
+  --limit 50 \
+  --json-output public/reports/mcp-report.json \
+  --markdown-output public/reports/mcp-report.md \
+  --manifest-output public/reports/mcp-report-manifest.json \
+  --diff-from reports/previous-mcp-report.json \
+  --published-base-url https://ax-score.example/reports/
+```
+
+The markdown report includes hosted artifact links and a historical diff summary, while the manifest records the JSON/markdown/manifest paths, hosted URLs, and machine-readable score changes for stakeholder review.
+
 ### MCP CLI Options
 
 ```
@@ -157,6 +171,11 @@ npx @agentgram/ax-score mcp-report --limit 50 --resume --json-output reports/mcp
     --json-output <file>  Path for the JSON report (default: mcp-report.json)
     --markdown-output <file>
                           Path for the markdown report (default: mcp-report.md)
+    --manifest-output <file>
+                          Path for a scheduled artifact manifest JSON file
+    --diff-from <file>    Previous JSON report to compare against for historical diffs
+    --published-base-url <url>
+                          Hosted base URL where report artifacts will be published
 ```
 
 **Strongly recommended for sweeps:** set `GITHUB_TOKEN` (any classic or fine-grained token, no scopes needed) to raise the GitHub API rate limit from 60 to 5,000 requests/hour. Without it, unauthenticated sweeps exhaust the quota after ~30 servers; when that happens ax-score shares the rate-limit state across the whole sweep — it either waits for an imminent quota reset (< 2 minutes) or marks every subsequent server's repository evidence as indeterminate and stamps the affected entries with `rateLimited: true`, so scores stay position-independent and comparable.
