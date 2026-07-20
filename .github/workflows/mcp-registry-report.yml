@@ -1,0 +1,182 @@
+name: MCP Registry AX Score Report
+
+on:
+  schedule:
+    # Publish a fresh official MCP Registry leaderboard every Monday at 08:00 UTC.
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Number of MCP Registry servers to score'
+        required: false
+        default: '50'
+      page_size:
+        description: 'Official Registry API page size'
+        required: false
+        default: '100'
+      concurrency:
+        description: 'Maximum concurrent MCP server audits'
+        required: false
+        default: '5'
+      timeout:
+        description: 'Per-request timeout in milliseconds'
+        required: false
+        default: '30000'
+      registry:
+        description: 'MCP Registry base URL'
+        required: false
+        default: 'https://registry.modelcontextprotocol.io'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+env:
+  REPORT_DIR: public/reports
+  REPORT_JSON: public/reports/mcp-report.json
+  REPORT_MARKDOWN: public/reports/mcp-report.md
+
+concurrency:
+  group: mcp-registry-ax-score-report
+  cancel-in-progress: false
+
+jobs:
+  publish-report:
+    name: Sweep official MCP Registry and publish AX Score report
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.4.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build CLI
+        run: pnpm build
+
+      - name: Resolve report inputs
+        id: report-inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "limit=${{ inputs.limit || '50' }}" >> "$GITHUB_OUTPUT"
+          echo "page_size=${{ inputs.page_size || '100' }}" >> "$GITHUB_OUTPUT"
+          echo "concurrency=${{ inputs.concurrency || '5' }}" >> "$GITHUB_OUTPUT"
+          echo "timeout=${{ inputs.timeout || '30000' }}" >> "$GITHUB_OUTPUT"
+          echo "registry=${{ inputs.registry || 'https://registry.modelcontextprotocol.io' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate MCP Registry AX Score report
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$REPORT_DIR"
+          node dist/bin/ax-score.js mcp-report \
+            --registry "${{ steps.report-inputs.outputs.registry }}" \
+            --limit "${{ steps.report-inputs.outputs.limit }}" \
+            --page-size "${{ steps.report-inputs.outputs.page_size }}" \
+            --concurrency "${{ steps.report-inputs.outputs.concurrency }}" \
+            --timeout "${{ steps.report-inputs.outputs.timeout }}" \
+            --json-output "$REPORT_JSON" \
+            --markdown-output "$REPORT_MARKDOWN"
+
+      - name: Build static report index
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+
+          const htmlEscapes = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+          };
+          const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => htmlEscapes[char]);
+          const smokeServerName = '<img src=x onerror=alert(1)>';
+          const escapedSmokeServerName = escapeHtml(smokeServerName);
+          if (escapedSmokeServerName !== '&lt;img src=x onerror=alert(1)&gt;') {
+            throw new Error('HTML escaping smoke check failed for MCP server names');
+          }
+
+          const report = JSON.parse(readFileSync(process.env.REPORT_JSON, 'utf8'));
+          const timestamp = new Date(report.timestamp).toISOString();
+          const rows = report.entries
+            .filter((entry) => entry.score !== null)
+            .slice(0, 20)
+            .map(
+              (entry, index) =>
+                `<tr><td>${index + 1}</td><td><code>${escapeHtml(entry.server)}</code></td><td>${entry.score}</td></tr>`
+            )
+            .join('\n');
+
+          const html = `<!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>MCP Registry AX Score Report</title>
+              <style>
+                body { font-family: system-ui, sans-serif; margin: 2rem; line-height: 1.5; }
+                table { border-collapse: collapse; width: 100%; max-width: 960px; }
+                th, td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; }
+                th { background: #f6f8fa; }
+                code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+              </style>
+            </head>
+            <body>
+              <h1>MCP Registry AX Score Report</h1>
+              <p>Generated ${timestamp} from ${escapeHtml(report.registryUrl)}.</p>
+              <p>Scored ${report.scored} of ${report.requested} requested servers; ${report.failed} failed.</p>
+              <p><a href="reports/mcp-report.md">Markdown leaderboard</a> · <a href="reports/mcp-report.json">Machine-readable JSON</a></p>
+              <h2>Top scored servers</h2>
+              <table><thead><tr><th>#</th><th>Server</th><th>Score</th></tr></thead><tbody>${rows}</tbody></table>
+            </body>
+          </html>`;
+
+          mkdirSync('public/reports', { recursive: true });
+          writeFileSync('public/index.html', html);
+          writeFileSync('public/reports/index.html', html);
+          NODE
+
+      - name: Upload report artifact bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-registry-ax-score-report
+          path: |
+            public/index.html
+            public/reports/index.html
+            public/reports/mcp-report.json
+            public/reports/mcp-report.md
+          if-no-files-found: error
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

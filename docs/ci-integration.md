@@ -140,3 +140,19 @@ jobs:
           AGENTGRAM_API_KEY: ${{ secrets.AGENTGRAM_API_KEY }}
         run: ax-score https://your-api.example.com --upload
 ```
+
+---
+
+## Scheduled MCP Registry Report Publishing
+
+The repository ships a ready-to-run workflow at `.github/workflows/mcp-registry-report.yml` for AX Score's MCP Registry quality surface. It runs on a weekly schedule and can also be started manually with `workflow_dispatch` inputs for `limit`, `page_size`, `concurrency`, `timeout`, and `registry`.
+
+The workflow performs the full publishing pipeline:
+
+1. Builds the local CLI from source.
+2. Runs `ax-score mcp-report` against the official MCP Registry cursor-paginated API.
+3. Writes `public/reports/mcp-report.json` and `public/reports/mcp-report.md`.
+4. Builds a static `public/index.html` summary with links to the machine-readable and markdown artifacts.
+5. Uploads the report bundle as a workflow artifact and deploys it to GitHub Pages.
+
+Set repository Pages to use GitHub Actions as the source before enabling the scheduled report. The workflow passes `GITHUB_TOKEN` to raise GitHub API limits for repository evidence during MCP audits; no extra token scopes are required.
