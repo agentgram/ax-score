@@ -136,4 +136,75 @@ describe('diffMcpSweepReports', () => {
       },
     ]);
   });
+
+  it('omits unchanged null scores while preserving transitions into and out of scored state', () => {
+    const baseEntry = makeReport().entries[0]!;
+    const previous: McpSweepReport = {
+      ...makeReport(),
+      requested: 3,
+      scored: 1,
+      failed: 2,
+      entries: [
+        {
+          ...baseEntry,
+          server: 'io.github.acme/still-unscored',
+          score: null,
+          categoryScores: {},
+        },
+        {
+          ...baseEntry,
+          server: 'io.github.acme/recovered',
+          score: null,
+          categoryScores: {},
+        },
+        {
+          ...baseEntry,
+          server: 'io.github.acme/regressed',
+          score: 42,
+        },
+      ],
+    };
+    const current: McpSweepReport = {
+      ...makeReport(),
+      requested: 3,
+      scored: 1,
+      failed: 2,
+      entries: [
+        {
+          ...baseEntry,
+          server: 'io.github.acme/still-unscored',
+          score: null,
+          categoryScores: {},
+        },
+        {
+          ...baseEntry,
+          server: 'io.github.acme/recovered',
+          score: 77,
+        },
+        {
+          ...baseEntry,
+          server: 'io.github.acme/regressed',
+          score: null,
+          categoryScores: {},
+        },
+      ],
+    };
+
+    const diff = diffMcpSweepReports(current, previous);
+
+    expect(diff.scoreChanges).toEqual([
+      {
+        server: 'io.github.acme/recovered',
+        previousScore: null,
+        currentScore: 77,
+        delta: null,
+      },
+      {
+        server: 'io.github.acme/regressed',
+        previousScore: 42,
+        currentScore: null,
+        delta: null,
+      },
+    ]);
+  });
 });

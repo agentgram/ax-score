@@ -73,7 +73,10 @@ export function diffMcpSweepReports(
         delta,
       };
     })
-    .filter((entry) => entry.delta !== 0)
+    .filter(
+      (entry) =>
+        entry.delta !== 0 && (entry.previousScore !== null || entry.currentScore !== null)
+    )
     .sort((a, b) => {
       const aAbs = a.delta === null ? Number.POSITIVE_INFINITY : Math.abs(a.delta);
       const bAbs = b.delta === null ? Number.POSITIVE_INFINITY : Math.abs(b.delta);
