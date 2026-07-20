@@ -104,6 +104,20 @@ jobs:
           node --input-type=module <<'NODE'
           import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
+          const htmlEscapes = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+          };
+          const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => htmlEscapes[char]);
+          const smokeServerName = '<img src=x onerror=alert(1)>';
+          const escapedSmokeServerName = escapeHtml(smokeServerName);
+          if (escapedSmokeServerName !== '&lt;img src=x onerror=alert(1)&gt;') {
+            throw new Error('HTML escaping smoke check failed for MCP server names');
+          }
+
           const report = JSON.parse(readFileSync(process.env.REPORT_JSON, 'utf8'));
           const timestamp = new Date(report.timestamp).toISOString();
           const rows = report.entries
@@ -111,7 +125,7 @@ jobs:
             .slice(0, 20)
             .map(
               (entry, index) =>
-                `<tr><td>${index + 1}</td><td><code>${entry.server}</code></td><td>${entry.score}</td></tr>`
+                `<tr><td>${index + 1}</td><td><code>${escapeHtml(entry.server)}</code></td><td>${entry.score}</td></tr>`
             )
             .join('\n');
 
@@ -131,7 +145,7 @@ jobs:
             </head>
             <body>
               <h1>MCP Registry AX Score Report</h1>
-              <p>Generated ${timestamp} from ${report.registryUrl}.</p>
+              <p>Generated ${timestamp} from ${escapeHtml(report.registryUrl)}.</p>
               <p>Scored ${report.scored} of ${report.requested} requested servers; ${report.failed} failed.</p>
               <p><a href="reports/mcp-report.md">Markdown leaderboard</a> · <a href="reports/mcp-report.json">Machine-readable JSON</a></p>
               <h2>Top scored servers</h2>
