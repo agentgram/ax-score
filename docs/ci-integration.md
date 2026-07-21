@@ -151,8 +151,10 @@ The workflow performs the full publishing pipeline:
 
 1. Builds the local CLI from source.
 2. Runs `ax-score mcp-report` against the official MCP Registry cursor-paginated API.
-3. Writes `public/reports/mcp-report.json` and `public/reports/mcp-report.md`.
-4. Builds a static `public/index.html` summary with links to the machine-readable and markdown artifacts.
-5. Uploads the report bundle as a workflow artifact and deploys it to GitHub Pages.
+3. Fetches the previously published `mcp-report.json` from GitHub Pages when available.
+4. Writes `public/reports/mcp-report.json`, `public/reports/mcp-report.md`, and `public/reports/mcp-report-manifest.json`.
+5. Embeds the historical diff in the manifest and static index when a previous report was available.
+6. Builds a static `public/index.html` summary with links to the machine-readable, markdown, and manifest artifacts.
+7. Uploads the report bundle as a workflow artifact and deploys it to GitHub Pages.
 
 Set repository Pages to use GitHub Actions as the source before enabling the scheduled report. The workflow passes `GITHUB_TOKEN` to raise GitHub API limits for repository evidence during MCP audits; no extra token scopes are required.

@@ -36,6 +36,8 @@ env:
   REPORT_DIR: public/reports
   REPORT_JSON: public/reports/mcp-report.json
   REPORT_MARKDOWN: public/reports/mcp-report.md
+  REPORT_MANIFEST: public/reports/mcp-report-manifest.json
+  PREVIOUS_REPORT: previous-mcp-report.json
 
 concurrency:
   group: mcp-registry-ax-score-report
@@ -70,6 +72,10 @@ jobs:
       - name: Build CLI
         run: pnpm build
 
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
       - name: Resolve report inputs
         id: report-inputs
         shell: bash
@@ -81,6 +87,21 @@ jobs:
           echo "timeout=${{ inputs.timeout || '30000' }}" >> "$GITHUB_OUTPUT"
           echo "registry=${{ inputs.registry || 'https://registry.modelcontextprotocol.io' }}" >> "$GITHUB_OUTPUT"
 
+      - name: Fetch previous published report for historical diff
+        id: previous-report
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${{ steps.pages.outputs.base_url }}"
+          previous_url="${base_url%/}/reports/mcp-report.json"
+          if curl --fail --silent --show-error --location --max-time 30 "$previous_url" --output "$PREVIOUS_REPORT"; then
+            echo "diff_from=$PREVIOUS_REPORT" >> "$GITHUB_OUTPUT"
+            echo "Previous report fetched from $previous_url"
+          else
+            echo "diff_from=" >> "$GITHUB_OUTPUT"
+            echo "No previous report available at $previous_url; publishing without historical diff."
+          fi
+
       - name: Generate MCP Registry AX Score report
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -88,14 +109,25 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$REPORT_DIR"
-          node dist/bin/ax-score.js mcp-report \
+          base_url="${{ steps.pages.outputs.base_url }}"
+          published_base_url="${base_url%/}/reports/"
+          args=(
+            mcp-report
             --registry "${{ steps.report-inputs.outputs.registry }}" \
             --limit "${{ steps.report-inputs.outputs.limit }}" \
             --page-size "${{ steps.report-inputs.outputs.page_size }}" \
             --concurrency "${{ steps.report-inputs.outputs.concurrency }}" \
             --timeout "${{ steps.report-inputs.outputs.timeout }}" \
             --json-output "$REPORT_JSON" \
-            --markdown-output "$REPORT_MARKDOWN"
+            --markdown-output "$REPORT_MARKDOWN" \
+            --manifest-output "$REPORT_MANIFEST" \
+            --published-base-url "$published_base_url"
+          )
+          diff_from="${{ steps.previous-report.outputs.diff_from }}"
+          if [ -n "$diff_from" ]; then
+            args+=(--diff-from "$diff_from")
+          fi
+          node dist/bin/ax-score.js "${args[@]}"
 
       - name: Build static report index
         shell: bash
@@ -119,7 +151,27 @@ jobs:
           }
 
           const report = JSON.parse(readFileSync(process.env.REPORT_JSON, 'utf8'));
+          const manifest = JSON.parse(readFileSync(process.env.REPORT_MANIFEST, 'utf8'));
           const timestamp = new Date(report.timestamp).toISOString();
+          const diff = manifest.diff;
+          const diffSummary = diff
+            ? `<p>Historical diff: compared with ${escapeHtml(diff.previousTimestamp)}; ${escapeHtml(
+                String(diff.scoredDelta)
+              )} scored, ${escapeHtml(String(diff.failedDelta))} failed, ${escapeHtml(
+                String(diff.addedServers.length)
+              )} added, ${escapeHtml(String(diff.removedServers.length))} removed.</p>`
+            : '<p>Historical diff: no previous published report was available for this run.</p>';
+          const notableChanges = diff?.scoreChanges?.slice(0, 5) ?? [];
+          const notableChangeList = notableChanges.length
+            ? `<h2>Notable score changes</h2><ul>${notableChanges
+                .map((change) => {
+                  const delta = change.delta === null ? 'n/a' : change.delta > 0 ? `+${change.delta}` : String(change.delta);
+                  return `<li><code>${escapeHtml(change.server)}</code>: ${escapeHtml(
+                    change.previousScore ?? 'n/a'
+                  )} → ${escapeHtml(change.currentScore ?? 'n/a')} (${escapeHtml(delta)})</li>`;
+                })
+                .join('\n')}</ul>`
+            : '';
           const rows = report.entries
             .filter((entry) => entry.score !== null)
             .slice(0, 20)
@@ -147,7 +199,9 @@ jobs:
               <h1>MCP Registry AX Score Report</h1>
               <p>Generated ${timestamp} from ${escapeHtml(report.registryUrl)}.</p>
               <p>Scored ${report.scored} of ${report.requested} requested servers; ${report.failed} failed.</p>
-              <p><a href="reports/mcp-report.md">Markdown leaderboard</a> · <a href="reports/mcp-report.json">Machine-readable JSON</a></p>
+              ${diffSummary}
+              <p><a href="reports/mcp-report.md">Markdown leaderboard</a> · <a href="reports/mcp-report.json">Machine-readable JSON</a> · <a href="reports/mcp-report-manifest.json">Artifact manifest and historical diff JSON</a></p>
+              ${notableChangeList}
               <h2>Top scored servers</h2>
               <table><thead><tr><th>#</th><th>Server</th><th>Score</th></tr></thead><tbody>${rows}</tbody></table>
             </body>
@@ -167,10 +221,8 @@ jobs:
             public/reports/index.html
             public/reports/mcp-report.json
             public/reports/mcp-report.md
+            public/reports/mcp-report-manifest.json
           if-no-files-found: error
-
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4

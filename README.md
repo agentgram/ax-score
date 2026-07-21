@@ -139,7 +139,7 @@ npx @agentgram/ax-score mcp-report \
 
 The markdown report includes hosted artifact links and a historical diff summary, while the manifest records the JSON/markdown/manifest paths, hosted URLs, and machine-readable score changes for stakeholder review.
 
-The repository also includes a scheduled publishing pipeline at `.github/workflows/mcp-registry-report.yml`. It builds the CLI, runs the official Registry sweep weekly (or on demand via `workflow_dispatch`), uploads the JSON/markdown artifacts, and deploys a small static report index to GitHub Pages for operator and stakeholder review.
+The repository also includes a scheduled publishing pipeline at `.github/workflows/mcp-registry-report.yml`. It builds the CLI, runs the official Registry sweep weekly (or on demand via `workflow_dispatch`), uploads the JSON/markdown/manifest artifacts, compares against the previously published report when one exists, and deploys a small static report index to GitHub Pages for operator and stakeholder review.
 
 ### MCP CLI Options
 
