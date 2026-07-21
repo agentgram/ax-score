@@ -109,6 +109,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$REPORT_DIR"
+          base_url="${{ steps.pages.outputs.base_url }}"
+          published_base_url="${base_url%/}/reports/"
           args=(
             mcp-report
             --registry "${{ steps.report-inputs.outputs.registry }}" \
@@ -119,7 +121,7 @@ jobs:
             --json-output "$REPORT_JSON" \
             --markdown-output "$REPORT_MARKDOWN" \
             --manifest-output "$REPORT_MANIFEST" \
-            --published-base-url "${{ steps.pages.outputs.base_url }}reports/"
+            --published-base-url "$published_base_url"
           )
           diff_from="${{ steps.previous-report.outputs.diff_from }}"
           if [ -n "$diff_from" ]; then
