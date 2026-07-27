@@ -101,7 +101,7 @@ console.log(repeatedRun.stability);
 
 ## 🔌 MCP Server Scoring
 
-The official [MCP Registry](https://registry.modelcontextprotocol.io) lists thousands of servers with no quality signal. The `mcp` mode scores any registered server 0-100, Lighthouse-style, using the same gather → audit → score pipeline.
+The official [MCP Registry](https://modelcontextprotocol.io/registry) lists thousands of servers with no quality signal. The `mcp` mode scores any registered server 0-100, Lighthouse-style, using the same gather → audit → score pipeline.
 
 ### Score one server
 
