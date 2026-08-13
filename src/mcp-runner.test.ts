@@ -93,7 +93,7 @@ describe('runMcpAudit', () => {
     expect(report.server).toBe('io.github.acme/todo-server');
     expect(report.serverVersion).toBe('1.2.3');
     expect(report.categories).toHaveLength(5);
-    expect(Object.keys(report.audits)).toHaveLength(18);
+    expect(Object.keys(report.audits)).toHaveLength(19);
     expect(report.score).toBeGreaterThanOrEqual(90);
 
     for (const category of report.categories) {
