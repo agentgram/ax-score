@@ -32,7 +32,15 @@ export class McpRemoteTlsAudit extends McpBaseAudit {
 
     const secure = probes.filter((p) => p.https);
     const score = secure.length / probes.length;
-    const items = probes.map((p) => ({ url: p.url, https: p.https }));
+    const items = probes.map((p) => ({
+      url: p.url,
+      https: p.https,
+      resolutionDecision: p.resolutionPolicy.decision,
+      resolutionReason: p.resolutionPolicy.reason,
+      resolutionEvidence: p.resolutionEvidence,
+      redirectChain: p.redirectChain,
+      fetchDecisionReceipt: p.fetchDecisionReceipt,
+    }));
     const summary = `${secure.length}/${probes.length} remote endpoints use HTTPS.`;
 
     if (score >= 1) return this.pass({ type: 'table', items, summary });

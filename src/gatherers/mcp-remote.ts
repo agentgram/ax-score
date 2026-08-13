@@ -1,3 +1,6 @@
+import { createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import type { McpConfig } from '../types.js';
 import type { GatherResult } from './base-gatherer.js';
 import type { McpRegistryGatherResult } from './mcp-registry.js';
@@ -5,6 +8,45 @@ import { DEFAULT_TIMEOUT } from '../config/default.js';
 
 const USER_AGENT = 'AX-Score/1.0 (mcp-audit)';
 const RETRY_DELAY_MS = 500;
+const MAX_REDIRECTS = 5;
+
+export interface RemoteResolutionEvidence {
+  hostname: string;
+  address: string | null;
+  family: 4 | 6 | null;
+  source: 'literal' | 'dns';
+  error?: string;
+  privateHost?: boolean;
+}
+
+export interface RemoteRedirectEvidence {
+  from: string;
+  to: string;
+  statusCode: number;
+}
+
+export interface RemoteResolutionPolicy {
+  allowed: boolean;
+  decision: 'probe' | 'block';
+  reason: string;
+}
+
+export interface RemoteFetchDecisionPayload {
+  url: string;
+  type: string | null;
+  allowed: boolean;
+  reason: string;
+  evidence: RemoteResolutionEvidence[];
+  redirects: RemoteRedirectEvidence[];
+}
+
+export interface RemoteFetchDecisionReceipt {
+  signatureAlgorithm: 'ed25519';
+  canonicalization: 'json-stable-v1';
+  decisionPayload: RemoteFetchDecisionPayload;
+  signature: string;
+  publicKey: string;
+}
 
 export interface RemoteProbe {
   url: string;
@@ -18,6 +60,14 @@ export interface RemoteProbe {
   /** Whether any HTTP response was received (auth challenges count as reachable). */
   reachable: boolean;
   statusCode: number | null;
+  /** DNS/IP resolution evidence gathered before each fetch decision. */
+  resolutionEvidence: RemoteResolutionEvidence[];
+  /** Redirect hops observed with manual redirect handling. */
+  redirectChain: RemoteRedirectEvidence[];
+  /** Final allow/block decision made before probing or following redirects. */
+  resolutionPolicy: RemoteResolutionPolicy;
+  /** Ed25519-signed receipt over the final fetch decision. */
+  fetchDecisionReceipt: RemoteFetchDecisionReceipt;
 }
 
 export interface McpRemoteGatherResult extends GatherResult {
@@ -26,6 +76,30 @@ export interface McpRemoteGatherResult extends GatherResult {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(',')}}`;
+}
+
+function signFetchDecision(payload: RemoteFetchDecisionPayload): RemoteFetchDecisionReceipt {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const publicKey = createPublicKey(privateKey);
+  const canonicalPayload = stableStringify(payload);
+
+  return {
+    signatureAlgorithm: 'ed25519',
+    canonicalization: 'json-stable-v1',
+    decisionPayload: payload,
+    signature: sign(null, Buffer.from(canonicalPayload), privateKey).toString('base64'),
+    publicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+  };
 }
 
 /**
@@ -67,30 +141,210 @@ export function isPrivateHost(hostname: string): boolean {
   return false;
 }
 
-async function fetchStatus(url: string, timeout: number): Promise<number> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-  try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': USER_AGENT,
-        Accept: 'application/json, text/event-stream',
+async function resolveHost(hostname: string): Promise<RemoteResolutionEvidence[]> {
+  const literalFamily = isIP(hostname);
+  if (literalFamily === 4 || literalFamily === 6) {
+    return [
+      {
+        hostname,
+        address: hostname,
+        family: literalFamily,
+        source: 'literal',
+        privateHost: isPrivateHost(hostname),
       },
-      redirect: 'follow',
-    });
+    ];
+  }
 
-    // Drain nothing: we only need the status line. Cancel the body if present.
-    if (res.body) {
-      try {
-        await res.body.cancel();
-      } catch {
-        // Body cancellation failure does not affect the probe result.
+  try {
+    const entries = await lookup(hostname, { all: true, verbatim: true });
+    return entries.map((entry) => ({
+      hostname,
+      address: entry.address,
+      family: entry.family === 6 ? 6 : 4,
+      source: 'dns',
+      privateHost: isPrivateHost(entry.address),
+    }));
+  } catch (err) {
+    return [
+      {
+        hostname,
+        address: null,
+        family: null,
+        source: 'dns',
+        error: err instanceof Error ? err.message : 'DNS lookup failed',
+        privateHost: false,
+      },
+    ];
+  }
+}
+
+async function resolveUrl(
+  url: string,
+  type: string | null,
+  redirectChain: RemoteRedirectEvidence[]
+): Promise<{
+  parsed: URL;
+  evidence: RemoteResolutionEvidence[];
+  policy: RemoteResolutionPolicy;
+  receipt: RemoteFetchDecisionReceipt;
+}> {
+  const parsed = new URL(url);
+  const evidence = await resolveHost(parsed.hostname);
+  const privateTarget = isPrivateHost(parsed.hostname) || evidence.some((item) => item.privateHost);
+  const policy: RemoteResolutionPolicy = privateTarget
+    ? {
+        allowed: false,
+        decision: 'block',
+        reason: 'Remote endpoint resolves to a private/link-local/loopback target.',
       }
+    : {
+        allowed: true,
+        decision: 'probe',
+        reason: 'Remote endpoint resolved without private/link-local DNS or IP evidence.',
+      };
+  const receipt = signFetchDecision({
+    url,
+    type,
+    allowed: policy.allowed,
+    reason: policy.reason,
+    evidence,
+    redirects: redirectChain,
+  });
+
+  return { parsed, evidence, policy, receipt };
+}
+
+function isRedirectStatus(statusCode: number): boolean {
+  return (
+    statusCode === 301 ||
+    statusCode === 302 ||
+    statusCode === 303 ||
+    statusCode === 307 ||
+    statusCode === 308
+  );
+}
+
+function probeFromDecision(
+  url: string,
+  type: string | null,
+  https: boolean,
+  resolutionEvidence: RemoteResolutionEvidence[],
+  redirectChain: RemoteRedirectEvidence[],
+  resolutionPolicy: RemoteResolutionPolicy,
+  fetchDecisionReceipt: RemoteFetchDecisionReceipt,
+  overrides: Partial<
+    Pick<RemoteProbe, 'validUrl' | 'privateHost' | 'reachable' | 'statusCode'>
+  > = {}
+): RemoteProbe {
+  return {
+    url,
+    type,
+    https,
+    validUrl: overrides.validUrl ?? true,
+    privateHost: overrides.privateHost ?? !resolutionPolicy.allowed,
+    reachable: overrides.reachable ?? false,
+    statusCode: overrides.statusCode ?? null,
+    resolutionEvidence,
+    redirectChain,
+    resolutionPolicy,
+    fetchDecisionReceipt,
+  };
+}
+
+async function fetchStatus(
+  url: string,
+  timeout: number,
+  type: string | null
+): Promise<{
+  statusCode: number;
+  resolutionEvidence: RemoteResolutionEvidence[];
+  redirectChain: RemoteRedirectEvidence[];
+  receipt: RemoteFetchDecisionReceipt;
+}> {
+  let currentUrl = url;
+  let resolutionEvidence: RemoteResolutionEvidence[] = [];
+  const redirectChain: RemoteRedirectEvidence[] = [];
+
+  for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
+    const decision = await resolveUrl(currentUrl, type, redirectChain);
+    resolutionEvidence = [...resolutionEvidence, ...decision.evidence];
+    if (!decision.policy.allowed) {
+      throw new RemotePolicyError(
+        currentUrl,
+        decision.policy,
+        resolutionEvidence,
+        redirectChain,
+        decision.receipt
+      );
     }
-    return res.status;
-  } finally {
-    clearTimeout(timer);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const res = await fetch(currentUrl, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': USER_AGENT,
+          Accept: 'application/json, text/event-stream',
+        },
+        redirect: 'manual',
+      });
+
+      // Drain nothing: we only need the status line. Cancel the body if present.
+      if (res.body) {
+        try {
+          await res.body.cancel();
+        } catch {
+          // Body cancellation failure does not affect the probe result.
+        }
+      }
+      if (isRedirectStatus(res.status)) {
+        const location = res.headers.get('location');
+        if (location && redirects < MAX_REDIRECTS) {
+          const nextUrl = new URL(location, currentUrl).toString();
+          redirectChain.push({ from: currentUrl, to: nextUrl, statusCode: res.status });
+          currentUrl = nextUrl;
+          continue;
+        }
+      }
+
+      return {
+        statusCode: res.status,
+        resolutionEvidence,
+        redirectChain,
+        receipt: decision.receipt,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  const decision = await resolveUrl(currentUrl, type, redirectChain);
+  throw new RemotePolicyError(
+    currentUrl,
+    { allowed: false, decision: 'block', reason: 'Remote endpoint exceeded redirect limit.' },
+    [...resolutionEvidence, ...decision.evidence],
+    redirectChain,
+    signFetchDecision({
+      url: currentUrl,
+      type,
+      allowed: false,
+      reason: 'Remote endpoint exceeded redirect limit.',
+      evidence: [...resolutionEvidence, ...decision.evidence],
+      redirects: redirectChain,
+    })
+  );
+}
+
+class RemotePolicyError extends Error {
+  constructor(
+    readonly url: string,
+    readonly policy: RemoteResolutionPolicy,
+    readonly resolutionEvidence: RemoteResolutionEvidence[],
+    readonly redirectChain: RemoteRedirectEvidence[],
+    readonly receipt: RemoteFetchDecisionReceipt
+  ) {
+    super(policy.reason);
   }
 }
 
@@ -103,6 +357,19 @@ async function probeRemote(
   try {
     parsed = new URL(url);
   } catch {
+    const policy: RemoteResolutionPolicy = {
+      allowed: false,
+      decision: 'block',
+      reason: 'Remote endpoint URL is invalid.',
+    };
+    const receipt = signFetchDecision({
+      url,
+      type,
+      allowed: false,
+      reason: policy.reason,
+      evidence: [],
+      redirects: [],
+    });
     return {
       url,
       type,
@@ -111,27 +378,77 @@ async function probeRemote(
       privateHost: false,
       reachable: false,
       statusCode: null,
+      resolutionEvidence: [],
+      redirectChain: [],
+      resolutionPolicy: policy,
+      fetchDecisionReceipt: receipt,
     };
   }
 
   const https = parsed.protocol === 'https:';
 
-  if (isPrivateHost(parsed.hostname)) {
-    return { url, type, https, validUrl: true, privateHost: true, reachable: false, statusCode: null };
+  const initialDecision = await resolveUrl(url, type, []);
+  if (!initialDecision.policy.allowed) {
+    return probeFromDecision(
+      url,
+      type,
+      https,
+      initialDecision.evidence,
+      [],
+      initialDecision.policy,
+      initialDecision.receipt,
+      { privateHost: true }
+    );
   }
 
   // One retry with a short delay so a single transient network hiccup
   // does not zero the Operational category.
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const statusCode = await fetchStatus(url, timeout);
-      return { url, type, https, validUrl: true, privateHost: false, reachable: true, statusCode };
-    } catch {
+      const result = await fetchStatus(url, timeout, type);
+      return probeFromDecision(
+        url,
+        type,
+        https,
+        result.resolutionEvidence,
+        result.redirectChain,
+        {
+          allowed: true,
+          decision: 'probe',
+          reason: 'Remote endpoint probe completed after safe DNS/IP and redirect checks.',
+        },
+        result.receipt,
+        { privateHost: false, reachable: true, statusCode: result.statusCode }
+      );
+    } catch (err) {
+      if (err instanceof RemotePolicyError) {
+        return probeFromDecision(
+          url,
+          type,
+          https,
+          err.resolutionEvidence,
+          err.redirectChain,
+          err.policy,
+          err.receipt,
+          {
+            privateHost: true,
+          }
+        );
+      }
       if (attempt === 0) await sleep(RETRY_DELAY_MS);
     }
   }
 
-  return { url, type, https, validUrl: true, privateHost: false, reachable: false, statusCode: null };
+  return probeFromDecision(
+    url,
+    type,
+    https,
+    initialDecision.evidence,
+    [],
+    initialDecision.policy,
+    initialDecision.receipt,
+    { privateHost: false }
+  );
 }
 
 /**

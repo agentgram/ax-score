@@ -44,6 +44,11 @@ export class McpRemoteReachableAudit extends McpBaseAudit {
         url: probe.url,
         reachable: probe.reachable,
         statusCode: probe.statusCode,
+        resolutionDecision: probe.resolutionPolicy.decision,
+        resolutionReason: probe.resolutionPolicy.reason,
+        resolutionEvidence: probe.resolutionEvidence,
+        redirectChain: probe.redirectChain,
+        fetchDecisionReceipt: probe.fetchDecisionReceipt,
       };
     });
 
