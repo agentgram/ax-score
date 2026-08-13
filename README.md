@@ -189,10 +189,23 @@ The repository also includes a scheduled publishing pipeline at `.github/workflo
 | Metadata Completeness | 20%    | Description quality, repository link, semver version, license, display metadata |
 | Distribution Health   | 25%    | Packages resolve on npm/PyPI, publish freshness, version consistency            |
 | Provenance & Trust    | 25%    | Repository exists and is active, namespace/repo owner alignment, adoption       |
-| Operational           | 15%    | Remote endpoint reachability, TLS, well-formed server record                    |
+| Operational           | 15%    | Remote endpoint reachability, TLS, well-formed server record, ERC-8004 binding  |
 | Documentation         | 15%    | README presence and size, detectable setup instructions                         |
 
 Evidence that cannot be gathered (e.g., a GitHub rate limit, an unsupported package registry) is marked **indeterminate** and excluded from weighting — a server is never penalized for checks we could not run. In sweep output, a category with no evaluable audits is reported as `null` in JSON and `n/a` in the leaderboard — distinct from a genuine score of 0.
+
+### ERC-8004 registration evidence
+
+When an MCP Registry record includes ERC-8004 identity metadata (`erc8004.agentURI`, `agentURI`, or `agentUri`), AX Score now dereferences the agent registration file and evaluates any advertised A2A/MCP services that match the probed remote endpoints. The `erc8004-registration-service-binding` audit contributes to the Operational category only when this evidence is present; otherwise it is reported as not applicable and excluded from the score.
+
+The audit exports service-binding evidence in JSON reports so operators can inspect whether each advertised service has:
+
+- HTTPS transport and redirect-chain evidence from the remote probe
+- domain control relative to the declared agent URI (`same-host`, `same-registrable-domain`, `mismatch`, or `unverified`)
+- an Ed25519 fetch-decision receipt for the probe decision
+- optional `agentId`, `identityRegistry`, and `chainId` metadata from the registry record
+
+Remote reachability and TLS audit details also include DNS resolution policy, redirect-chain, and fetch-decision receipt fields. This keeps MCP sweep results auditable without silently penalizing servers that have not adopted ERC-8004 metadata yet.
 
 ### Known limitations (v1)
 
