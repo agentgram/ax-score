@@ -30,6 +30,34 @@ describe('McpRemoteGatherer', () => {
     vi.restoreAllMocks();
   });
 
+  it('should record a signed fetch decision receipt before probing a public remote', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => statusResponse(204));
+
+    const result = await gatherer.gather(
+      { server: 'io.github.acme/todo-server' },
+      registryArtifact([{ type: 'streamable-http', url: 'https://203.0.113.10/mcp' }])
+    );
+
+    const probe = result.remotes[0]!;
+    expect(probe.resolutionPolicy.allowed).toBe(true);
+    expect(probe.resolutionPolicy.decision).toBe('probe');
+    expect(probe.resolutionEvidence).toEqual([
+      {
+        hostname: '203.0.113.10',
+        address: '203.0.113.10',
+        family: 4,
+        source: 'literal',
+        privateHost: false,
+      },
+    ]);
+    expect(probe.fetchDecisionReceipt.decisionPayload.url).toBe('https://203.0.113.10/mcp');
+    expect(probe.fetchDecisionReceipt.decisionPayload.allowed).toBe(true);
+    expect(probe.fetchDecisionReceipt.signatureAlgorithm).toBe('ed25519');
+    expect(probe.fetchDecisionReceipt.signature).toMatch(/^[A-Za-z0-9+/]+={0,2}$/);
+    expect(probe.fetchDecisionReceipt.publicKey).toMatch(/^[A-Za-z0-9+/]+={0,2}$/);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('should mark endpoints that respond as reachable (405 counts)', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(() => statusResponse(405));
 
@@ -128,13 +156,65 @@ describe('McpRemoteGatherer', () => {
     for (const probe of result.remotes) {
       expect(probe.privateHost).toBe(true);
       expect(probe.reachable).toBe(false);
+      expect(probe.resolutionPolicy.allowed).toBe(false);
+      expect(probe.resolutionPolicy.decision).toBe('block');
+      expect(probe.fetchDecisionReceipt.decisionPayload.allowed).toBe(false);
     }
+  });
+
+  it('should block redirects to private or link-local targets before following them', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve({
+        ok: false,
+        status: 302,
+        headers: new Headers({ location: 'http://169.254.169.254/latest/meta-data' }),
+        body: null,
+      } as unknown as Response)
+    );
+
+    const result = await gatherer.gather(
+      { server: 'io.github.acme/todo-server' },
+      registryArtifact([{ type: 'streamable-http', url: 'https://203.0.113.10/mcp' }])
+    );
+
+    const probe = result.remotes[0]!;
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(probe.reachable).toBe(false);
+    expect(probe.statusCode).toBeNull();
+    expect(probe.privateHost).toBe(true);
+    expect(probe.redirectChain).toEqual([
+      {
+        from: 'https://203.0.113.10/mcp',
+        to: 'http://169.254.169.254/latest/meta-data',
+        statusCode: 302,
+      },
+    ]);
+    expect(probe.resolutionPolicy.decision).toBe('block');
+    expect(probe.resolutionPolicy.reason).toContain('private/link-local');
+    expect(probe.resolutionEvidence).toContainEqual({
+      hostname: '169.254.169.254',
+      address: '169.254.169.254',
+      family: 4,
+      source: 'literal',
+      privateHost: true,
+    });
   });
 });
 
 describe('isPrivateHost', () => {
   it('should detect private and special-use hosts', () => {
-    for (const host of ['localhost', '127.0.0.1', '10.1.2.3', '192.168.0.1', '172.20.0.1', '169.254.0.5', '::1', 'fd12::1', 'fe80::1', 'printer.local']) {
+    for (const host of [
+      'localhost',
+      '127.0.0.1',
+      '10.1.2.3',
+      '192.168.0.1',
+      '172.20.0.1',
+      '169.254.0.5',
+      '::1',
+      'fd12::1',
+      'fe80::1',
+      'printer.local',
+    ]) {
       expect(isPrivateHost(host), host).toBe(true);
     }
   });

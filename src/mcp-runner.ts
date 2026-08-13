@@ -25,6 +25,7 @@ import { McpRegistryGatherer, listRegistryServers } from './gatherers/mcp-regist
 import { McpPackageGatherer } from './gatherers/mcp-package.js';
 import { McpRepoGatherer, GithubRateLimiter } from './gatherers/mcp-repo.js';
 import { McpRemoteGatherer } from './gatherers/mcp-remote.js';
+import { Erc8004RegistrationGatherer } from './gatherers/erc8004-registration.js';
 
 // Audits — Metadata Completeness
 import { McpDescriptionQualityAudit } from './audits/mcp-description-quality.js';
@@ -49,6 +50,7 @@ import { McpRepoPopularityAudit } from './audits/mcp-repo-popularity.js';
 import { McpRemoteReachableAudit } from './audits/mcp-remote-reachable.js';
 import { McpRemoteTlsAudit } from './audits/mcp-remote-tls.js';
 import { McpServerRecordValidAudit } from './audits/mcp-server-record-valid.js';
+import { Erc8004RegistrationBindingAudit } from './audits/erc8004-registration-service-binding.js';
 
 // Audits — Documentation
 import { McpReadmeExistsAudit } from './audits/mcp-readme-exists.js';
@@ -79,6 +81,7 @@ function createMcpAudits(): BaseAudit[] {
     new McpRemoteReachableAudit(),
     new McpRemoteTlsAudit(),
     new McpServerRecordValidAudit(),
+    new Erc8004RegistrationBindingAudit(),
     // Documentation
     new McpReadmeExistsAudit(),
     new McpUsageInstructionsAudit(),
@@ -142,6 +145,9 @@ export async function runMcpAudit(
   artifacts['mcpPackage'] = packageResult;
   artifacts['mcpRepo'] = repoResult;
   artifacts['mcpRemote'] = remoteResult;
+
+  const erc8004RegistrationResult = await new Erc8004RegistrationGatherer().gather(config, artifacts);
+  artifacts['erc8004Registration'] = erc8004RegistrationResult;
 
   // Phase 2: Audit
   const allAudits = createMcpAudits();

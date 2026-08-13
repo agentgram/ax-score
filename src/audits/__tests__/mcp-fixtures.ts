@@ -103,14 +103,49 @@ export function makeRepoArtifact(
 }
 
 export function makeRemoteProbe(overrides: Partial<RemoteProbe> = {}): RemoteProbe {
+  const url = overrides.url ?? 'https://mcp.acme.dev/mcp';
+  const type = overrides.type ?? 'streamable-http';
+  const resolutionEvidence = overrides.resolutionEvidence ?? [
+    {
+      hostname: 'mcp.acme.dev',
+      address: '203.0.113.10',
+      family: 4,
+      source: 'dns',
+      privateHost: false,
+    },
+  ];
+  const redirectChain = overrides.redirectChain ?? [];
+  const resolutionPolicy = overrides.resolutionPolicy ?? {
+    allowed: true,
+    decision: 'probe',
+    reason: 'Remote endpoint resolved without private/link-local DNS or IP evidence.',
+  };
+
   return {
-    url: 'https://mcp.acme.dev/mcp',
-    type: 'streamable-http',
+    url,
+    type,
     https: true,
     validUrl: true,
     privateHost: false,
     reachable: true,
     statusCode: 405,
+    resolutionEvidence,
+    redirectChain,
+    resolutionPolicy,
+    fetchDecisionReceipt: overrides.fetchDecisionReceipt ?? {
+      signatureAlgorithm: 'ed25519',
+      canonicalization: 'json-stable-v1',
+      decisionPayload: {
+        url,
+        type,
+        allowed: resolutionPolicy.allowed,
+        reason: resolutionPolicy.reason,
+        evidence: resolutionEvidence,
+        redirects: redirectChain,
+      },
+      signature: 'fixture-signature',
+      publicKey: 'fixture-public-key',
+    },
     ...overrides,
   };
 }

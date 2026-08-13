@@ -103,6 +103,36 @@ export interface McpRemoteRef {
   url?: string;
 }
 
+/** ERC-8004-style service advertised by an agent registration file. */
+export interface AgentRegistrationService {
+  name?: string;
+  endpoint?: string;
+  version?: string;
+}
+
+/** Optional ERC-8004 identity metadata embedded by downstream registries. */
+export interface Erc8004AgentIdentityRef {
+  agentURI?: string;
+  agentUri?: string;
+  agentId?: string | number;
+  identityRegistry?: string;
+  chainId?: string | number;
+}
+
+export interface AgentServiceBindingEvidence {
+  agentURI: string;
+  agentId: string | null;
+  identityRegistry: string | null;
+  serviceName: string;
+  endpoint: string;
+  endpointHost: string;
+  agentUriHost: string | null;
+  domainControl: 'same-host' | 'same-registrable-domain' | 'mismatch' | 'unverified';
+  tls: boolean;
+  redirectCount: number;
+  signatureAlgorithm: 'ed25519';
+}
+
 /** A server record as returned by the official MCP Registry. */
 export interface McpServerRecord {
   name?: string;
@@ -110,6 +140,9 @@ export interface McpServerRecord {
   description?: string;
   version?: string;
   websiteUrl?: string;
+  erc8004?: Erc8004AgentIdentityRef;
+  agentURI?: string;
+  agentUri?: string;
   repository?: McpRepository;
   packages?: McpPackageRef[];
   remotes?: McpRemoteRef[];

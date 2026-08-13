@@ -10,6 +10,10 @@ describe('McpRemoteReachableAudit', () => {
   it('should pass when the remote responds (even with 405)', async () => {
     const result = await audit.audit(makeMcpArtifacts());
     expect(result.score).toBe(1);
+    expect(result.details?.items?.[0]).toMatchObject({
+      resolutionDecision: 'probe',
+      fetchDecisionReceipt: { signatureAlgorithm: 'ed25519' },
+    });
   });
 
   it('should fail when the remote never responds', async () => {
@@ -50,6 +54,10 @@ describe('McpRemoteTlsAudit', () => {
   it('should pass when all remotes use HTTPS', async () => {
     const result = await audit.audit(makeMcpArtifacts());
     expect(result.score).toBe(1);
+    expect(result.details?.items?.[0]).toMatchObject({
+      resolutionDecision: 'probe',
+      fetchDecisionReceipt: { signatureAlgorithm: 'ed25519' },
+    });
   });
 
   it('should fail plain-http remotes', async () => {

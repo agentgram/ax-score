@@ -30,6 +30,9 @@ export type {
   McpRepository,
   McpPackageRef,
   McpRemoteRef,
+  AgentRegistrationService,
+  Erc8004AgentIdentityRef,
+  AgentServiceBindingEvidence,
 } from './types.js';
 
 // Base classes (for extensibility)
@@ -62,6 +65,9 @@ export type { McpRepoGatherResult, McpReadmeProbe, McpRepoProvider } from './gat
 
 export { McpRemoteGatherer, isPrivateHost } from './gatherers/mcp-remote.js';
 export type { McpRemoteGatherResult, RemoteProbe } from './gatherers/mcp-remote.js';
+
+export { Erc8004RegistrationGatherer, buildAgentServiceBindings } from './gatherers/erc8004-registration.js';
+export type { Erc8004RegistrationGatherResult } from './gatherers/erc8004-registration.js';
 
 // MCP config
 export {
