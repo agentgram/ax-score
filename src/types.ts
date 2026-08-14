@@ -121,6 +121,7 @@ export interface Erc8004AgentIdentityRef {
 
 export interface AgentServiceBindingEvidence {
   agentURI: string;
+  registrationSha256?: string;
   agentId: string | null;
   identityRegistry: string | null;
   serviceName: string;
@@ -189,6 +190,16 @@ export interface McpReport {
 export interface McpSweepEntry {
   server: string;
   serverVersion: string | null;
+  /** ERC-8004 agent registration URI captured during this sweep. */
+  agentURI?: string | null;
+  /** SHA-256 hash of the fetched ERC-8004 registration file, when available. */
+  registrationSha256?: string | null;
+  /** True only when declared A2A/MCP services were re-attested after dereferencing. */
+  a2aMcpServiceReattested?: boolean;
+  /** Latest-version remote endpoint URLs captured from the registry record. */
+  remoteUrls?: string[];
+  /** Official registry status for the latest-version snapshot, when present. */
+  registryStatus?: string | null;
   score: number | null;
   /**
    * Per-category scores. `null` means the category was fully excluded from
@@ -222,6 +233,45 @@ export interface McpSweepScoreChange {
   delta: number | null;
 }
 
+export interface Erc8004AgentUriLineageEvidence {
+  server: string;
+  previousAgentURI: string | null;
+  currentAgentURI: string | null;
+  previousRegistrationSha256: string | null;
+  currentRegistrationSha256: string | null;
+  servicesReattested: boolean;
+  reputationWeightRetained: boolean;
+  transition: 'agent-uri-changed' | 'registration-hash-changed';
+}
+
+export interface McpEndpointDeprecationSnapshot {
+  timestamp: string;
+  version: string | null;
+  remoteUrls: string[];
+  score: number | null;
+  registryStatus: string | null;
+}
+
+export interface McpEndpointDeprecationSignature {
+  algorithm: 'ed25519';
+  payloadSha256: string;
+  signatureBase64: string;
+  publicKeyPem?: string;
+  signedAt: string;
+}
+
+export interface McpEndpointDeprecationEvidence {
+  server: string;
+  previousSnapshot: McpEndpointDeprecationSnapshot;
+  currentSnapshot: McpEndpointDeprecationSnapshot;
+  removedRemoteUrls: string[];
+  retainedRemoteUrls: string[];
+  confidence: number;
+  confidenceFactors: string[];
+  rationale: string;
+  signature?: McpEndpointDeprecationSignature;
+}
+
 export interface McpSweepDiff {
   previousTimestamp: string;
   currentTimestamp: string;
@@ -231,6 +281,8 @@ export interface McpSweepDiff {
   addedServers: string[];
   removedServers: string[];
   scoreChanges: McpSweepScoreChange[];
+  agentUriLineage: Erc8004AgentUriLineageEvidence[];
+  endpointDeprecations: McpEndpointDeprecationEvidence[];
 }
 
 export interface McpReportPublishedUrls {

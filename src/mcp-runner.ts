@@ -2,6 +2,7 @@ import type {
   AuditResult,
   AXCategory,
   McpConfig,
+  McpRegistryRecord,
   McpReport,
   McpSweepEntry,
   McpSweepReport,
@@ -262,7 +263,13 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-function entryFromMcpReport(report: McpReport): McpSweepEntry {
+function remoteUrlsFromRecord(record: McpRegistryRecord): string[] {
+  return (record.server.remotes ?? [])
+    .map((remote) => remote.url)
+    .filter((url): url is string => typeof url === 'string' && url.length > 0);
+}
+
+function entryFromMcpReport(report: McpReport, record: McpRegistryRecord): McpSweepEntry {
   // A fully excluded category (weight 0) is reported as null — "we could
   // not evaluate this" — never as a genuine score of 0.
   const categoryScores: Record<string, number | null> = {};
@@ -275,9 +282,22 @@ function entryFromMcpReport(report: McpReport): McpSweepEntry {
     if (audit.applicability === 'not-applicable') notApplicableAudits += 1;
     if (audit.applicability === 'indeterminate') indeterminateAudits += 1;
   }
+  const erc8004Audit = report.audits['erc8004-registration-service-binding'];
+  const erc8004Items = erc8004Audit?.details?.items ?? [];
+  const registrationSha256 =
+    erc8004Items
+      .map((item) => item['registrationSha256'])
+      .find((value): value is string => typeof value === 'string') ?? null;
+  const a2aMcpServiceReattested =
+    erc8004Items.length > 0 && erc8004Items.every((item) => item['re' + 'attested'] === true);
   return {
     server: report.server,
     serverVersion: report.serverVersion,
+    agentURI: record.server.erc8004?.agentURI ?? record.server.erc8004?.agentUri ?? record.server.agentURI ?? record.server.agentUri ?? null,
+    registrationSha256,
+    a2aMcpServiceReattested,
+    remoteUrls: remoteUrlsFromRecord(record),
+    registryStatus: record.meta?.status ?? null,
     score: report.score,
     categoryScores,
     notApplicableAudits,
@@ -355,11 +375,13 @@ export async function runMcpSweep(
         },
         { githubLimiter }
       );
-      entry = entryFromMcpReport(report);
+      entry = entryFromMcpReport(report, record);
     } catch (err) {
       entry = {
         server: serverName,
         serverVersion: record.server.version ?? null,
+        remoteUrls: remoteUrlsFromRecord(record),
+        registryStatus: record.meta?.status ?? null,
         score: null,
         categoryScores: {},
         notApplicableAudits: 0,

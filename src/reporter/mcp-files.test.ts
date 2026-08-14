@@ -137,6 +137,52 @@ describe('diffMcpSweepReports', () => {
     ]);
   });
 
+  it('records ERC-8004 agent URI lineage and limits reputation retention until services are re-attested', () => {
+    const baseEntry = makeReport().entries[0]!;
+    const previous: McpSweepReport = {
+      ...makeReport(),
+      timestamp: '2026-08-13T00:00:00.000Z',
+      entries: [
+        {
+          ...baseEntry,
+          score: 91,
+          agentURI: 'https://agent.acme.dev/old-agent.json',
+          registrationSha256: 'old-registration-hash',
+          a2aMcpServiceReattested: true,
+        },
+      ],
+    };
+    const current: McpSweepReport = {
+      ...makeReport(),
+      timestamp: '2026-08-14T00:00:00.000Z',
+      entries: [
+        {
+          ...baseEntry,
+          score: 96,
+          agentURI: 'https://agent.acme.dev/new-agent.json',
+          registrationSha256: 'new-registration-hash',
+          a2aMcpServiceReattested: false,
+        },
+      ],
+    };
+
+    const diff = diffMcpSweepReports(current, previous);
+
+    expect(diff.agentUriLineage).toEqual([
+      {
+        server: 'io.github.acme/todo-server',
+        previousAgentURI: 'https://agent.acme.dev/old-agent.json',
+        currentAgentURI: 'https://agent.acme.dev/new-agent.json',
+        previousRegistrationSha256: 'old-registration-hash',
+        currentRegistrationSha256: 'new-registration-hash',
+        servicesReattested: false,
+        reputationWeightRetained: false,
+        transition: 'agent-uri-changed',
+      },
+    ]);
+  });
+
+
   it('omits unchanged null scores while preserving transitions into and out of scored state', () => {
     const baseEntry = makeReport().entries[0]!;
     const previous: McpSweepReport = {

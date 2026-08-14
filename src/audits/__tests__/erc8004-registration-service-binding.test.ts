@@ -12,8 +12,10 @@ function makeRegistrationArtifact(
     fetched: true,
     error: null,
     registration: { services: [{ name: 'MCP', endpoint: 'https://mcp.acme.dev/mcp' }] },
+    registrationSha256: overrides.registrationSha256 ?? null,
     bindings: buildAgentServiceBindings({
       agentURI: 'https://agent.acme.dev/agent.json',
+      registrationSha256: overrides.registrationSha256 ?? undefined,
       server: structuredClone(HEALTHY_SERVER),
       services: [{ name: 'MCP', endpoint: 'https://mcp.acme.dev/mcp' }],
       remotes: [makeRemoteProbe({ url: 'https://mcp.acme.dev/mcp' })],
@@ -59,10 +61,17 @@ describe('Erc8004RegistrationBindingAudit', () => {
   const audit = new Erc8004RegistrationBindingAudit();
 
   it('should pass when declared A2A/MCP services have TLS and domain-bound Ed25519 evidence', async () => {
-    const result = await audit.audit({ ...makeMcpArtifacts(), erc8004Registration: makeRegistrationArtifact() });
+    const result = await audit.audit({
+      ...makeMcpArtifacts(),
+      erc8004Registration: makeRegistrationArtifact({ registrationSha256: 'fixture-current-hash' }),
+    });
 
     expect(result.score).toBe(1);
     expect(result.details?.summary).toContain('1/1');
+    expect(result.details?.items?.[0]).toMatchObject({
+      registrationSha256: 'fixture-current-hash',
+      reattested: true,
+    });
   });
 
   it('should fail when service endpoints are not domain-bound to the agent URI', async () => {

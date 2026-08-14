@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import type {
+  Erc8004AgentUriLineageEvidence,
   McpReportArtifactManifest,
   McpReportPublishedUrls,
   McpSweepDiff,
@@ -45,6 +46,41 @@ function buildHostedUrls(
 
 function isScored(entry: McpSweepEntry): entry is McpSweepEntry & { score: number } {
   return entry.score !== null;
+}
+
+
+function detectAgentUriLineage(
+  currentByServer: Map<string, McpSweepEntry>,
+  previousByServer: Map<string, McpSweepEntry>
+): Erc8004AgentUriLineageEvidence[] {
+  return [...currentByServer.entries()]
+    .filter(([server]) => previousByServer.has(server))
+    .flatMap(([server, currentEntry]) => {
+      const previousEntry = previousByServer.get(server)!;
+      const previousAgentURI = previousEntry.agentURI ?? null;
+      const currentAgentURI = currentEntry.agentURI ?? null;
+      const previousRegistrationSha256 = previousEntry.registrationSha256 ?? null;
+      const currentRegistrationSha256 = currentEntry.registrationSha256 ?? null;
+      if (!previousAgentURI && !currentAgentURI && !previousRegistrationSha256 && !currentRegistrationSha256) return [];
+      const uriChanged = previousAgentURI !== currentAgentURI;
+      const hashChanged = previousRegistrationSha256 !== currentRegistrationSha256;
+      if (!uriChanged && !hashChanged) return [];
+      const servicesReattested = currentEntry.a2aMcpServiceReattested === true;
+      const transition: Erc8004AgentUriLineageEvidence['transition'] = uriChanged
+        ? 'agent-uri-changed'
+        : 'registration-hash-changed';
+      return [{
+        server,
+        previousAgentURI,
+        currentAgentURI,
+        previousRegistrationSha256,
+        currentRegistrationSha256,
+        servicesReattested,
+        reputationWeightRetained: servicesReattested,
+        transition,
+      }];
+    })
+    .sort((a, b) => a.server.localeCompare(b.server));
 }
 
 export function diffMcpSweepReports(
@@ -92,6 +128,8 @@ export function diffMcpSweepReports(
     addedServers,
     removedServers,
     scoreChanges,
+    agentUriLineage: detectAgentUriLineage(currentByServer, previousByServer),
+    endpointDeprecations: [],
   };
 }
 
