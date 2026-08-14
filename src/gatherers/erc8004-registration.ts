@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { AgentRegistrationService, AgentServiceBindingEvidence, Erc8004AgentIdentityRef, McpConfig, McpServerRecord } from '../types.js';
 import type { GatherResult } from './base-gatherer.js';
 import type { RemoteProbe } from './mcp-remote.js';
@@ -13,7 +14,21 @@ export interface Erc8004RegistrationGatherResult extends GatherResult {
   fetched: boolean;
   error: string | null;
   registration: AgentRegistrationDocument | null;
+  registrationSha256: string | null;
   bindings: AgentServiceBindingEvidence[];
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(',')}}`;
+}
+
+function sha256Registration(document: unknown): string {
+  return createHash('sha256').update(stableJson(document)).digest('hex');
 }
 
 function normalizeAgentURI(server: McpServerRecord): string | null {
@@ -85,7 +100,7 @@ function remoteByEndpoint(remotes: RemoteProbe[]): Map<string, RemoteProbe> {
   return new Map(remotes.map((remote) => [remote.url, remote]));
 }
 
-export function buildAgentServiceBindings(args: { agentURI: string; server: McpServerRecord; services: AgentRegistrationService[]; remotes: RemoteProbe[]; }): AgentServiceBindingEvidence[] {
+export function buildAgentServiceBindings(args: { agentURI: string; registrationSha256?: string | null; server: McpServerRecord; services: AgentRegistrationService[]; remotes: RemoteProbe[]; }): AgentServiceBindingEvidence[] {
   let agentUriHost: string | null = null;
   try { const parsedAgentUri = new URL(args.agentURI); agentUriHost = parsedAgentUri.protocol === 'https:' ? parsedAgentUri.hostname : null; } catch { agentUriHost = null; }
   const identity = identityRef(args.server);
@@ -98,6 +113,7 @@ export function buildAgentServiceBindings(args: { agentURI: string; server: McpS
     try { endpointHost = new URL(endpoint).hostname; } catch { return []; }
     return [{
       agentURI: args.agentURI,
+      ...(args.registrationSha256 ? { registrationSha256: args.registrationSha256 } : {}),
       agentId: normalizeIdentityValue(identity.agentId),
       identityRegistry: normalizeIdentityValue(identity.identityRegistry),
       serviceName: service.name ?? 'unknown',
@@ -118,15 +134,16 @@ export class Erc8004RegistrationGatherer {
     const registry = artifacts['mcpRegistry'] as McpRegistryGatherResult | undefined;
     const remote = artifacts['mcpRemote'] as { remotes?: RemoteProbe[] } | undefined;
     const server = registry?.server;
-    if (!server) return { agentURI: null, fetched: false, error: 'Missing MCP registry server record.', registration: null, bindings: [] };
+    if (!server) return { agentURI: null, fetched: false, error: 'Missing MCP registry server record.', registration: null, registrationSha256: null, bindings: [] };
     const agentURI = normalizeAgentURI(server);
-    if (!agentURI) return { agentURI: null, fetched: false, error: null, registration: null, bindings: [] };
+    if (!agentURI) return { agentURI: null, fetched: false, error: null, registration: null, registrationSha256: null, bindings: [] };
     try {
       const document = await fetchRegistration(agentURI, config.timeout ?? DEFAULT_TIMEOUT);
+      const registrationSha256 = sha256Registration(document);
       const services = registrationServices(document);
-      return { agentURI, fetched: true, error: null, registration: { services }, bindings: buildAgentServiceBindings({ agentURI, server, services, remotes: remote?.remotes ?? [] }) };
+      return { agentURI, fetched: true, error: null, registration: { services }, registrationSha256, bindings: buildAgentServiceBindings({ agentURI, registrationSha256, server, services, remotes: remote?.remotes ?? [] }) };
     } catch (err) {
-      return { agentURI, fetched: false, error: err instanceof Error ? err.message : 'Could not dereference agent registration file.', registration: null, bindings: [] };
+      return { agentURI, fetched: false, error: err instanceof Error ? err.message : 'Could not dereference agent registration file.', registration: null, registrationSha256: null, bindings: [] };
     }
   }
 }

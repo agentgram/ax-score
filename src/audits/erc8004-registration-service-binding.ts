@@ -27,6 +27,8 @@ export class Erc8004RegistrationBindingAudit extends McpBaseAudit {
       domainControl: binding.domainControl,
       redirects: binding.redirectCount,
       receipt: binding.signatureAlgorithm,
+      registrationSha256: binding.registrationSha256 ?? registration.registrationSha256,
+      reattested: binding.tls && binding.signatureAlgorithm === 'ed25519' && (binding.domainControl === 'same-host' || binding.domainControl === 'same-registrable-domain'),
     }));
     const verified = bindings.filter((binding) => binding.tls && binding.signatureAlgorithm === 'ed25519' && (binding.domainControl === 'same-host' || binding.domainControl === 'same-registrable-domain'));
     const score = verified.length / bindings.length;
