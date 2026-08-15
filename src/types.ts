@@ -140,6 +140,9 @@ export interface McpServerRecord {
   title?: string;
   description?: string;
   version?: string;
+  schema?: unknown;
+  schemas?: unknown;
+  tools?: unknown;
   websiteUrl?: string;
   erc8004?: Erc8004AgentIdentityRef;
   agentURI?: string;
@@ -200,6 +203,8 @@ export interface McpSweepEntry {
   remoteUrls?: string[];
   /** Official registry status for the latest-version snapshot, when present. */
   registryStatus?: string | null;
+  /** Canonical hash over semver-significant Registry fields. */
+  semanticVersionFingerprint?: McpSemanticVersionFingerprint;
   score: number | null;
   /**
    * Per-category scores. `null` means the category was fully excluded from
@@ -231,6 +236,39 @@ export interface McpSweepScoreChange {
   previousScore: number | null;
   currentScore: number | null;
   delta: number | null;
+  semanticVersionReceipt?: McpSemanticVersionReceipt;
+}
+
+export interface McpSemanticVersionFingerprint {
+  canonicalization: 'mcp-registry-semantic-v1';
+  fields: ['title', 'description', 'schema', 'remotes'];
+  canonicalSha256: string;
+  fieldSha256?: {
+    title: string;
+    description: string;
+    schema: string;
+    remotes: string;
+  };
+}
+
+export interface McpSemanticVersionReceiptSignature {
+  signatureAlgorithm: 'ed25519';
+  canonicalization: 'json-stable-v1';
+  payloadSha256: string;
+  signatureBase64: string;
+  publicKeyBase64: string;
+  signedAt: string;
+}
+
+export interface McpSemanticVersionReceipt {
+  server: string;
+  previousVersion: string;
+  currentVersion: string;
+  previousCanonicalSha256: string;
+  currentCanonicalSha256: string;
+  classification: 'version-only-increment' | 'semantic-change';
+  rationale: string;
+  signature: McpSemanticVersionReceiptSignature;
 }
 
 export interface Erc8004AgentUriLineageEvidence {
@@ -281,6 +319,7 @@ export interface McpSweepDiff {
   addedServers: string[];
   removedServers: string[];
   scoreChanges: McpSweepScoreChange[];
+  semanticVersionReceipts: McpSemanticVersionReceipt[];
   agentUriLineage: Erc8004AgentUriLineageEvidence[];
   endpointDeprecations: McpEndpointDeprecationEvidence[];
 }

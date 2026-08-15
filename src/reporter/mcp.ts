@@ -160,8 +160,20 @@ export function renderMcpLeaderboard(
       lines.push('');
       for (const change of notableChanges) {
         const delta = change.delta === null ? 'n/a' : formatSignedNumber(change.delta);
+        const semanticReceipt = change.semanticVersionReceipt
+          ? ` — ${change.semanticVersionReceipt.classification}: ${change.semanticVersionReceipt.rationale}`
+          : '';
         lines.push(
-          `- ${escapeMarkdown(change.server)}: ${change.previousScore ?? 'n/a'} → ${change.currentScore ?? 'n/a'} (${delta})`
+          `- ${escapeMarkdown(change.server)}: ${change.previousScore ?? 'n/a'} → ${change.currentScore ?? 'n/a'} (${delta})${semanticReceipt}`
+        );
+      }
+    }
+    if (options.diff.semanticVersionReceipts.length > 0) {
+      lines.push('');
+      lines.push('Semantic-version receipts:');
+      for (const receipt of options.diff.semanticVersionReceipts.slice(0, 5)) {
+        lines.push(
+          `- ${escapeMarkdown(receipt.server)} ${receipt.previousVersion} → ${receipt.currentVersion}: ${receipt.classification}; signature ${receipt.signature.payloadSha256}`
         );
       }
     }
