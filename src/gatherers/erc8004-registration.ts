@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto';
-import type { AgentRegistrationService, AgentServiceBindingEvidence, Erc8004AgentIdentityRef, McpConfig, McpServerRecord } from '../types.js';
+import type {
+  AgentRegistrationService,
+  AgentServiceBindingEvidence,
+  AgentValidationRequest,
+  AgentValidationResponse,
+  Erc8004AgentIdentityRef,
+  Erc8004ValidationLineageEvidence,
+  Erc8004ValidationResponseEvidence,
+  McpConfig,
+  McpServerRecord,
+} from '../types.js';
 import type { GatherResult } from './base-gatherer.js';
 import type { RemoteProbe } from './mcp-remote.js';
 import type { McpRegistryGatherResult } from './mcp-registry.js';
@@ -8,7 +18,7 @@ import { isPrivateHost } from './mcp-remote.js';
 
 const USER_AGENT = 'AX-Score/1.0 (erc8004-registration-binding)';
 
-export interface AgentRegistrationDocument { services?: AgentRegistrationService[]; }
+export interface AgentRegistrationDocument { services?: AgentRegistrationService[]; validationRequests?: AgentValidationRequest[]; }
 export interface Erc8004RegistrationGatherResult extends GatherResult {
   agentURI: string | null;
   fetched: boolean;
@@ -16,6 +26,7 @@ export interface Erc8004RegistrationGatherResult extends GatherResult {
   registration: AgentRegistrationDocument | null;
   registrationSha256: string | null;
   bindings: AgentServiceBindingEvidence[];
+  validationLineage: Erc8004ValidationLineageEvidence[];
 }
 
 function stableJson(value: unknown): string {
@@ -77,6 +88,49 @@ function registrationServices(document: unknown): AgentRegistrationService[] {
   }));
 }
 
+function normalizeString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function normalizeNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function validationResponseFromRecord(record: Record<string, unknown>): AgentValidationResponse {
+  return {
+    requestHash: normalizeString(record['requestHash']),
+    validator: normalizeString(record['validator']),
+    score: normalizeNumber(record['score']),
+    responseURI: normalizeString(record['responseURI'] ?? record['responseUri']),
+    responseHash: normalizeString(record['responseHash']),
+    tag: normalizeString(record['tag']),
+    updatedAt: normalizeString(record['updatedAt']),
+    blockNumber: normalizeNumber(record['blockNumber']),
+    transactionHash: normalizeString(record['transactionHash']),
+  };
+}
+
+function validationRequests(document: unknown): AgentValidationRequest[] {
+  if (!document || typeof document !== 'object') return [];
+  const rawRequests = (document as Record<string, unknown>)['validationRequests'] ?? (document as Record<string, unknown>)['validations'];
+  if (!Array.isArray(rawRequests)) return [];
+  return rawRequests
+    .filter((request): request is Record<string, unknown> => Boolean(request) && typeof request === 'object')
+    .map((request) => {
+      const rawResponses = request['validationResponses'] ?? request['responses'];
+      const responses = Array.isArray(rawResponses)
+        ? rawResponses
+            .filter((response): response is Record<string, unknown> => Boolean(response) && typeof response === 'object')
+            .map((response) => validationResponseFromRecord(response))
+        : [];
+      return {
+        requestHash: normalizeString(request['requestHash']),
+        validator: normalizeString(request['validator']),
+        validationResponses: responses,
+      };
+    });
+}
+
 function isA2aOrMcpService(service: AgentRegistrationService): boolean {
   const name = service.name?.toLowerCase() ?? '';
   return name === 'a2a' || name === 'mcp';
@@ -94,6 +148,82 @@ async function fetchRegistration(agentURI: string, timeout: number): Promise<unk
     if (!response.ok) throw new Error(`agentURI responded with HTTP ${response.status}.`);
     return response.json();
   } finally { clearTimeout(timer); }
+}
+
+function normalizeSha256(value: string | undefined): string | null {
+  if (!value) return null;
+  const normalized = value.toLowerCase().replace(/^sha-?256[:=]/, '').replace(/^0x/, '');
+  return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
+}
+
+async function fetchResponseBody(responseURI: string, timeout: number): Promise<Uint8Array> {
+  if (responseURI.startsWith('data:')) {
+    const response = await fetch(responseURI);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+  const parsed = new URL(responseURI);
+  if (parsed.protocol !== 'https:') throw new Error('Only HTTPS and data: responseURI verification is supported.');
+  if (isPrivateHost(parsed.hostname)) throw new Error('responseURI resolves to a private/link-local host.');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(responseURI, { signal: controller.signal, headers: { 'User-Agent': USER_AGENT }, redirect: 'follow' });
+    if (!response.ok) throw new Error(`responseURI responded with HTTP ${response.status}.`);
+    return new Uint8Array(await response.arrayBuffer());
+  } finally { clearTimeout(timer); }
+}
+
+async function verifyResponseHash(responseURI: string | undefined, responseHash: string | undefined, timeout: number): Promise<boolean | null> {
+  const expected = normalizeSha256(responseHash);
+  if (!responseURI || !expected) return null;
+  try {
+    const body = await fetchResponseBody(responseURI, timeout);
+    return createHash('sha256').update(body).digest('hex') === expected;
+  } catch {
+    return false;
+  }
+}
+
+export async function buildProgressiveValidationLineage(args: { validationRequests: AgentValidationRequest[]; timeout: number; }): Promise<Erc8004ValidationLineageEvidence[]> {
+  const grouped = await Promise.all(args.validationRequests.flatMap(async (request) => {
+    if (!request.requestHash || !request.validator) return [];
+    const sourceResponses = request.validationResponses ?? request.responses ?? [];
+    const responses: Erc8004ValidationResponseEvidence[] = await Promise.all(sourceResponses.map(async (response, index) => {
+      const responseRequestHash = response.requestHash ?? request.requestHash ?? null;
+      const responseValidator = response.validator ?? request.validator ?? null;
+      const normalizedResponseHash = normalizeSha256(response.responseHash);
+      return {
+        order: index + 1,
+        requestHash: responseRequestHash,
+        validator: responseValidator,
+        requestHashMatches: responseRequestHash === request.requestHash,
+        validatorMatchesRequest: responseValidator === request.validator,
+        score: typeof response.score === 'number' && Number.isFinite(response.score) ? response.score : null,
+        responseURI: response.responseURI ?? null,
+        responseHash: normalizedResponseHash ?? response.responseHash ?? null,
+        responseHashVerified: await verifyResponseHash(response.responseURI, response.responseHash, args.timeout),
+        responseHashAlgorithm: normalizedResponseHash ? 'sha256' : null,
+        tag: response.tag ?? null,
+        updatedAt: response.updatedAt ?? null,
+        blockNumber: response.blockNumber ?? null,
+        transactionHash: response.transactionHash ?? null,
+        isLatest: index === sourceResponses.length - 1,
+      };
+    }));
+    const latest = responses.at(-1);
+    return [{
+      requestHash: request.requestHash,
+      validator: request.validator,
+      responseCount: responses.length,
+      orderedTags: responses.map((response) => response.tag).filter((tag): tag is string => typeof tag === 'string'),
+      latestTag: latest?.tag ?? null,
+      latestScore: latest?.score ?? null,
+      allResponsesBound: responses.length > 0 && responses.every((response) => response.requestHashMatches && response.validatorMatchesRequest),
+      allResponseHashesVerified: responses.length > 0 && responses.every((response) => response.responseHashVerified === true),
+      responses,
+    }];
+  }));
+  return grouped.flat().sort((a, b) => a.requestHash.localeCompare(b.requestHash) || a.validator.localeCompare(b.validator));
 }
 
 function remoteByEndpoint(remotes: RemoteProbe[]): Map<string, RemoteProbe> {
@@ -134,16 +264,26 @@ export class Erc8004RegistrationGatherer {
     const registry = artifacts['mcpRegistry'] as McpRegistryGatherResult | undefined;
     const remote = artifacts['mcpRemote'] as { remotes?: RemoteProbe[] } | undefined;
     const server = registry?.server;
-    if (!server) return { agentURI: null, fetched: false, error: 'Missing MCP registry server record.', registration: null, registrationSha256: null, bindings: [] };
+    if (!server) return { agentURI: null, fetched: false, error: 'Missing MCP registry server record.', registration: null, registrationSha256: null, bindings: [], validationLineage: [] };
     const agentURI = normalizeAgentURI(server);
-    if (!agentURI) return { agentURI: null, fetched: false, error: null, registration: null, registrationSha256: null, bindings: [] };
+    if (!agentURI) return { agentURI: null, fetched: false, error: null, registration: null, registrationSha256: null, bindings: [], validationLineage: [] };
     try {
-      const document = await fetchRegistration(agentURI, config.timeout ?? DEFAULT_TIMEOUT);
+      const timeout = config.timeout ?? DEFAULT_TIMEOUT;
+      const document = await fetchRegistration(agentURI, timeout);
       const registrationSha256 = sha256Registration(document);
       const services = registrationServices(document);
-      return { agentURI, fetched: true, error: null, registration: { services }, registrationSha256, bindings: buildAgentServiceBindings({ agentURI, registrationSha256, server, services, remotes: remote?.remotes ?? [] }) };
+      const validationRequestEvidence = validationRequests(document);
+      return {
+        agentURI,
+        fetched: true,
+        error: null,
+        registration: { services, validationRequests: validationRequestEvidence },
+        registrationSha256,
+        bindings: buildAgentServiceBindings({ agentURI, registrationSha256, server, services, remotes: remote?.remotes ?? [] }),
+        validationLineage: await buildProgressiveValidationLineage({ validationRequests: validationRequestEvidence, timeout }),
+      };
     } catch (err) {
-      return { agentURI, fetched: false, error: err instanceof Error ? err.message : 'Could not dereference agent registration file.', registration: null, registrationSha256: null, bindings: [] };
+      return { agentURI, fetched: false, error: err instanceof Error ? err.message : 'Could not dereference agent registration file.', registration: null, registrationSha256: null, bindings: [], validationLineage: [] };
     }
   }
 }

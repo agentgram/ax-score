@@ -110,6 +110,57 @@ export interface AgentRegistrationService {
   version?: string;
 }
 
+/** ERC-8004 progressive validation response advertised by an agent registration file. */
+export interface AgentValidationResponse {
+  requestHash?: string;
+  validator?: string;
+  score?: number;
+  responseURI?: string;
+  responseHash?: string;
+  tag?: string;
+  updatedAt?: string;
+  blockNumber?: number;
+  transactionHash?: string;
+}
+
+/** ERC-8004 validation request plus its repeated validator responses. */
+export interface AgentValidationRequest {
+  requestHash?: string;
+  validator?: string;
+  validationResponses?: AgentValidationResponse[];
+  responses?: AgentValidationResponse[];
+}
+
+export interface Erc8004ValidationResponseEvidence {
+  order: number;
+  requestHash: string | null;
+  validator: string | null;
+  requestHashMatches: boolean;
+  validatorMatchesRequest: boolean;
+  score: number | null;
+  responseURI: string | null;
+  responseHash: string | null;
+  responseHashVerified: boolean | null;
+  responseHashAlgorithm: 'sha256' | null;
+  tag: string | null;
+  updatedAt: string | null;
+  blockNumber: number | null;
+  transactionHash: string | null;
+  isLatest: boolean;
+}
+
+export interface Erc8004ValidationLineageEvidence {
+  requestHash: string;
+  validator: string;
+  responseCount: number;
+  orderedTags: string[];
+  latestTag: string | null;
+  latestScore: number | null;
+  allResponsesBound: boolean;
+  allResponseHashesVerified: boolean;
+  responses: Erc8004ValidationResponseEvidence[];
+}
+
 /** Optional ERC-8004 identity metadata embedded by downstream registries. */
 export interface Erc8004AgentIdentityRef {
   agentURI?: string;
@@ -199,6 +250,8 @@ export interface McpSweepEntry {
   registrationSha256?: string | null;
   /** True only when declared A2A/MCP services were re-attested after dereferencing. */
   a2aMcpServiceReattested?: boolean;
+  /** ERC-8004 validation responses grouped by requestHash/original validator. */
+  validationLineage?: Erc8004ValidationLineageEvidence[];
   /** Latest-version remote endpoint URLs captured from the registry record. */
   remoteUrls?: string[];
   /** Official registry status for the latest-version snapshot, when present. */

@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import { Erc8004RegistrationBindingAudit } from '../erc8004-registration-service-binding.js';
-import { buildAgentServiceBindings } from '../../gatherers/erc8004-registration.js';
+import { buildAgentServiceBindings, buildProgressiveValidationLineage } from '../../gatherers/erc8004-registration.js';
 import { makeMcpArtifacts, makeRemoteProbe, HEALTHY_SERVER } from './mcp-fixtures.js';
 import type { Erc8004RegistrationGatherResult } from '../../gatherers/erc8004-registration.js';
 
@@ -20,6 +21,7 @@ function makeRegistrationArtifact(
       services: [{ name: 'MCP', endpoint: 'https://mcp.acme.dev/mcp' }],
       remotes: [makeRemoteProbe({ url: 'https://mcp.acme.dev/mcp' })],
     }),
+    validationLineage: [],
     ...overrides,
   };
 }
@@ -57,6 +59,91 @@ describe('buildAgentServiceBindings', () => {
   });
 });
 
+describe('buildProgressiveValidationLineage', () => {
+  it('binds every progressive response to its request hash and original validator while marking latest tag state', async () => {
+    const firstPayload = 'soft validation evidence';
+    const finalPayload = 'final validation evidence';
+    const lineage = await buildProgressiveValidationLineage({
+      validationRequests: [
+        {
+          requestHash: '0xrequest',
+          validator: '0xvalidator',
+          validationResponses: [
+            {
+              score: 60,
+              responseURI: `data:text/plain,${encodeURIComponent(firstPayload)}`,
+              responseHash: createHash('sha256').update(firstPayload).digest('hex'),
+              tag: 'soft',
+            },
+            {
+              requestHash: '0xrequest',
+              validator: '0xvalidator',
+              score: 94,
+              responseURI: `data:text/plain,${encodeURIComponent(finalPayload)}`,
+              responseHash: createHash('sha256').update(finalPayload).digest('hex'),
+              tag: 'final',
+            },
+          ],
+        },
+      ],
+      timeout: 100,
+    });
+
+    expect(lineage).toEqual([
+      expect.objectContaining({
+        requestHash: '0xrequest',
+        validator: '0xvalidator',
+        responseCount: 2,
+        orderedTags: ['soft', 'final'],
+        latestTag: 'final',
+        latestScore: 94,
+        allResponsesBound: true,
+        allResponseHashesVerified: true,
+      }),
+    ]);
+    expect(lineage[0]!.responses.map((response) => response.isLatest)).toEqual([false, true]);
+    expect(lineage[0]!.responses.every((response) => response.requestHash === '0xrequest' && response.validator === '0xvalidator')).toBe(true);
+  });
+
+  it('flags validator/request mismatches and responseURI hash mismatches without treating them as bound evidence', async () => {
+    const lineage = await buildProgressiveValidationLineage({
+      validationRequests: [
+        {
+          requestHash: '0xrequest',
+          validator: '0xvalidator',
+          responses: [
+            {
+              requestHash: '0xother',
+              validator: '0xattacker',
+              score: 100,
+              responseURI: 'data:text/plain,tampered',
+              responseHash: createHash('sha256').update('expected').digest('hex'),
+              tag: 'final',
+            },
+          ],
+        },
+      ],
+      timeout: 100,
+    });
+
+    expect(lineage[0]).toMatchObject({
+      requestHash: '0xrequest',
+      validator: '0xvalidator',
+      allResponsesBound: false,
+      allResponseHashesVerified: false,
+      latestTag: 'final',
+      latestScore: 100,
+    });
+    expect(lineage[0]!.responses[0]).toMatchObject({
+      requestHash: '0xother',
+      validator: '0xattacker',
+      requestHashMatches: false,
+      validatorMatchesRequest: false,
+      responseHashVerified: false,
+    });
+  });
+});
+
 describe('Erc8004RegistrationBindingAudit', () => {
   const audit = new Erc8004RegistrationBindingAudit();
 
@@ -72,6 +159,40 @@ describe('Erc8004RegistrationBindingAudit', () => {
       registrationSha256: 'fixture-current-hash',
       reattested: true,
     });
+  });
+
+  it('should export progressive validation lineage as audit evidence', async () => {
+    const payload = 'final response evidence';
+    const validationLineage = await buildProgressiveValidationLineage({
+      validationRequests: [{
+        requestHash: '0xrequest',
+        validator: '0xvalidator',
+        validationResponses: [{
+          score: 91,
+          responseURI: `data:text/plain,${encodeURIComponent(payload)}`,
+          responseHash: createHash('sha256').update(payload).digest('hex'),
+          tag: 'final',
+        }],
+      }],
+      timeout: 100,
+    });
+    const result = await audit.audit({
+      ...makeMcpArtifacts(),
+      erc8004Registration: makeRegistrationArtifact({ validationLineage }),
+    });
+
+    expect(result.score).toBe(1);
+    expect(result.details?.summary).toContain('1/1 validation request lineage receipts');
+    expect(result.details?.items).toContainEqual(expect.objectContaining({
+      kind: 'erc8004-validation-lineage',
+      requestHash: '0xrequest',
+      validator: '0xvalidator',
+      orderedTags: ['final'],
+      latestTag: 'final',
+      latestScore: 91,
+      allResponsesBound: true,
+      allResponseHashesVerified: true,
+    }));
   });
 
   it('should fail when service endpoints are not domain-bound to the agent URI', async () => {

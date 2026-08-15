@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runMcpAudit, runMcpSweep } from './mcp-runner.js';
 
@@ -13,6 +14,18 @@ function jsonResponse(
     body: null,
     headers: { get: (name: string) => headerMap.get(name.toLowerCase()) ?? null },
     json: () => Promise.resolve(body),
+  } as unknown as Response);
+}
+
+function dataResponse(url: string): Promise<Response> {
+  const body = Buffer.from(decodeURIComponent(url.slice(url.indexOf(',') + 1)));
+  return Promise.resolve({
+    ok: true,
+    status: 200,
+    body: null,
+    headers: { get: () => null },
+    json: () => Promise.resolve(JSON.parse(body.toString('utf8'))),
+    arrayBuffer: () => Promise.resolve(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength)),
   } as unknown as Response);
 }
 
@@ -70,6 +83,8 @@ function mockFetchRoutes(overrides: FetchHandler = () => null): void {
     const url = String(input);
     const overridden = overrides(url);
     if (overridden) return overridden;
+
+    if (url.startsWith('data:')) return dataResponse(url);
 
     if (url.includes('registry.modelcontextprotocol.io')) return jsonResponse(REGISTRY_RECORD);
     if (url.includes('registry.npmjs.org')) return jsonResponse(NPM_BODY);
@@ -201,6 +216,55 @@ describe('runMcpSweep', () => {
     expect(entry.categoryScores['mcp-documentation']).toBe(0);
     expect(entry.notApplicableAudits).toBeGreaterThan(0);
     expect(entry.indeterminateAudits).toBeGreaterThan(0);
+  });
+
+  it('should export ERC-8004 progressive validation lineage on sweep entries', async () => {
+    const record = structuredClone(REGISTRY_RECORD);
+    const responseBody = 'final validation evidence';
+    const registration = {
+      services: [{ name: 'MCP', endpoint: 'https://mcp.acme.dev/mcp' }],
+      validationRequests: [{
+        requestHash: '0xrequest',
+        validator: '0xvalidator',
+        validationResponses: [{
+          score: 93,
+          responseURI: `data:text/plain,${encodeURIComponent(responseBody)}`,
+          responseHash: createHash('sha256').update(responseBody).digest('hex'),
+          tag: 'final',
+        }],
+      }],
+    };
+    (record.server as typeof record.server & { erc8004: { agentURI: string } }).erc8004 = {
+      agentURI: `data:application/json,${encodeURIComponent(JSON.stringify(registration))}`,
+    };
+    const listBody = { servers: [record], metadata: { count: 1 } };
+
+    mockFetchRoutes((url) => {
+      if (url.includes('/v0/servers?')) return jsonResponse(listBody);
+      return null;
+    });
+
+    const report = await runMcpSweep({ limit: 1 });
+    const entry = report.entries[0]!;
+
+    expect(entry.validationLineage).toEqual([
+      expect.objectContaining({
+        requestHash: '0xrequest',
+        validator: '0xvalidator',
+        orderedTags: ['final'],
+        latestTag: 'final',
+        latestScore: 93,
+        allResponsesBound: true,
+        allResponseHashesVerified: true,
+      }),
+    ]);
+    expect(entry.validationLineage?.[0]?.responses[0]).toMatchObject({
+      order: 1,
+      requestHashMatches: true,
+      validatorMatchesRequest: true,
+      responseHashVerified: true,
+      isLatest: true,
+    });
   });
 
   it('should stamp rateLimited and stop hitting GitHub once the quota is exhausted', async () => {
