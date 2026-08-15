@@ -4,9 +4,11 @@ import type {
   McpConfig,
   McpRegistryRecord,
   McpReport,
+  McpSemanticVersionFingerprint,
   McpSweepEntry,
   McpSweepReport,
 } from './types.js';
+import { createHash } from 'node:crypto';
 import type { GatherResult } from './gatherers/base-gatherer.js';
 import type { CategoryConfig } from './config/default.js';
 import { VERSION } from './config/default.js';
@@ -269,6 +271,60 @@ function remoteUrlsFromRecord(record: McpRegistryRecord): string[] {
     .filter((url): url is string => typeof url === 'string' && url.length > 0);
 }
 
+function stableJson(value: unknown): string {
+  if (value === undefined) return 'null';
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(',')}}`;
+}
+
+function sha256(value: unknown): string {
+  return createHash('sha256').update(stableJson(value)).digest('hex');
+}
+
+function canonicalText(value: unknown): string | null {
+  return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : null;
+}
+
+function canonicalRemotes(record: McpRegistryRecord): Array<{ type: string | null; url: string }> {
+  return (record.server.remotes ?? [])
+    .flatMap((remote) => {
+      if (typeof remote.url !== 'string' || remote.url.length === 0) return [];
+      return [{ type: typeof remote.type === 'string' ? remote.type : null, url: remote.url }];
+    })
+    .sort((a, b) => a.url.localeCompare(b.url) || (a.type ?? '').localeCompare(b.type ?? ''));
+}
+
+function schemaSurface(server: McpRegistryRecord['server']): unknown {
+  return server.schema ?? server.schemas ?? server.tools ?? null;
+}
+
+export function buildSemanticVersionFingerprint(
+  record: McpRegistryRecord
+): McpSemanticVersionFingerprint {
+  const semanticFields = {
+    title: canonicalText(record.server.title),
+    description: canonicalText(record.server.description),
+    schema: schemaSurface(record.server),
+    remotes: canonicalRemotes(record),
+  };
+
+  return {
+    canonicalization: 'mcp-registry-semantic-v1',
+    fields: ['title', 'description', 'schema', 'remotes'],
+    canonicalSha256: sha256(semanticFields),
+    fieldSha256: {
+      title: sha256(semanticFields.title),
+      description: sha256(semanticFields.description),
+      schema: sha256(semanticFields.schema),
+      remotes: sha256(semanticFields.remotes),
+    },
+  };
+}
+
 function entryFromMcpReport(report: McpReport, record: McpRegistryRecord): McpSweepEntry {
   // A fully excluded category (weight 0) is reported as null — "we could
   // not evaluate this" — never as a genuine score of 0.
@@ -298,6 +354,7 @@ function entryFromMcpReport(report: McpReport, record: McpRegistryRecord): McpSw
     a2aMcpServiceReattested,
     remoteUrls: remoteUrlsFromRecord(record),
     registryStatus: record.meta?.status ?? null,
+    semanticVersionFingerprint: buildSemanticVersionFingerprint(record),
     score: report.score,
     categoryScores,
     notApplicableAudits,
@@ -382,6 +439,7 @@ export async function runMcpSweep(
         serverVersion: record.server.version ?? null,
         remoteUrls: remoteUrlsFromRecord(record),
         registryStatus: record.meta?.status ?? null,
+        semanticVersionFingerprint: buildSemanticVersionFingerprint(record),
         score: null,
         categoryScores: {},
         notApplicableAudits: 0,

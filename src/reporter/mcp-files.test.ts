@@ -182,6 +182,102 @@ describe('diffMcpSweepReports', () => {
     ]);
   });
 
+  it('flags adjacent Registry version-only increments with a signed semantic receipt', () => {
+    const baseEntry = makeReport().entries[0]!;
+    const previous: McpSweepReport = {
+      ...makeReport(),
+      timestamp: '2026-08-13T00:00:00.000Z',
+      entries: [
+        {
+          ...baseEntry,
+          serverVersion: '1.2.3',
+          semanticVersionFingerprint: {
+            canonicalization: 'mcp-registry-semantic-v1',
+            fields: ['title', 'description', 'schema', 'remotes'],
+            canonicalSha256: 'same-semantic-hash',
+          },
+        },
+      ],
+    };
+    const current: McpSweepReport = {
+      ...makeReport(),
+      timestamp: '2026-08-14T00:00:00.000Z',
+      entries: [
+        {
+          ...baseEntry,
+          serverVersion: '1.2.4',
+          semanticVersionFingerprint: {
+            canonicalization: 'mcp-registry-semantic-v1',
+            fields: ['title', 'description', 'schema', 'remotes'],
+            canonicalSha256: 'same-semantic-hash',
+          },
+        },
+      ],
+    };
+
+    const diff = diffMcpSweepReports(current, previous);
+
+    expect(diff.semanticVersionReceipts).toHaveLength(1);
+    expect(diff.semanticVersionReceipts[0]).toMatchObject({
+      server: 'io.github.acme/todo-server',
+      previousVersion: '1.2.3',
+      currentVersion: '1.2.4',
+      classification: 'version-only-increment',
+      previousCanonicalSha256: 'same-semantic-hash',
+      currentCanonicalSha256: 'same-semantic-hash',
+    });
+    expect(diff.semanticVersionReceipts[0]?.rationale).toContain(
+      'title/description/schema/remotes are unchanged'
+    );
+    expect(diff.semanticVersionReceipts[0]?.signature.signatureAlgorithm).toBe('ed25519');
+    expect(diff.semanticVersionReceipts[0]?.signature.payloadSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(diff.scoreChanges[0]?.semanticVersionReceipt?.classification).toBe(
+      'version-only-increment'
+    );
+  });
+
+  it('signs a semantic-change receipt when adjacent Registry versions change canonical fields', () => {
+    const baseEntry = makeReport().entries[0]!;
+    const previous: McpSweepReport = {
+      ...makeReport(),
+      timestamp: '2026-08-13T00:00:00.000Z',
+      entries: [
+        {
+          ...baseEntry,
+          serverVersion: '1.2.3',
+          semanticVersionFingerprint: {
+            canonicalization: 'mcp-registry-semantic-v1',
+            fields: ['title', 'description', 'schema', 'remotes'],
+            canonicalSha256: 'old-semantic-hash',
+          },
+        },
+      ],
+    };
+    const current: McpSweepReport = {
+      ...makeReport(),
+      timestamp: '2026-08-14T00:00:00.000Z',
+      entries: [
+        {
+          ...baseEntry,
+          serverVersion: '1.3.0',
+          semanticVersionFingerprint: {
+            canonicalization: 'mcp-registry-semantic-v1',
+            fields: ['title', 'description', 'schema', 'remotes'],
+            canonicalSha256: 'new-semantic-hash',
+          },
+        },
+      ],
+    };
+
+    const diff = diffMcpSweepReports(current, previous);
+
+    expect(diff.semanticVersionReceipts[0]).toMatchObject({
+      classification: 'semantic-change',
+      rationale:
+        'Registry version changed from 1.2.3 to 1.3.0 and canonical title/description/schema/remotes changed.',
+    });
+  });
+
 
   it('omits unchanged null scores while preserving transitions into and out of scored state', () => {
     const baseEntry = makeReport().entries[0]!;

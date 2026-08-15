@@ -1,9 +1,11 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { createHash, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
 import { basename, dirname } from 'node:path';
 import type {
   Erc8004AgentUriLineageEvidence,
   McpReportArtifactManifest,
   McpReportPublishedUrls,
+  McpSemanticVersionReceipt,
   McpSweepDiff,
   McpSweepEntry,
   McpSweepReport,
@@ -48,6 +50,82 @@ function isScored(entry: McpSweepEntry): entry is McpSweepEntry & { score: numbe
   return entry.score !== null;
 }
 
+function stableJson(value: unknown): string {
+  if (value === undefined) return 'null';
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(',')}}`;
+}
+
+function sha256(value: unknown): string {
+  return createHash('sha256').update(stableJson(value)).digest('hex');
+}
+
+function signSemanticVersionReceipt(
+  payload: Omit<McpSemanticVersionReceipt, 'signature'>
+): McpSemanticVersionReceipt {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const publicKey = createPublicKey(privateKey);
+  const signedAt = new Date().toISOString();
+  const signaturePayload = { ...payload, signedAt };
+  const canonicalPayload = stableJson(signaturePayload);
+
+  return {
+    ...payload,
+    signature: {
+      signatureAlgorithm: 'ed25519',
+      canonicalization: 'json-stable-v1',
+      payloadSha256: sha256(signaturePayload),
+      signatureBase64: sign(null, Buffer.from(canonicalPayload), privateKey).toString('base64'),
+      publicKeyBase64: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+      signedAt,
+    },
+  };
+}
+
+function detectSemanticVersionReceipts(
+  currentByServer: Map<string, McpSweepEntry>,
+  previousByServer: Map<string, McpSweepEntry>
+): McpSemanticVersionReceipt[] {
+  return [...currentByServer.entries()]
+    .filter(([server]) => previousByServer.has(server))
+    .flatMap(([server, currentEntry]) => {
+      const previousEntry = previousByServer.get(server)!;
+      const previousVersion = previousEntry.serverVersion;
+      const currentVersion = currentEntry.serverVersion;
+      const previousFingerprint = previousEntry.semanticVersionFingerprint;
+      const currentFingerprint = currentEntry.semanticVersionFingerprint;
+      if (!previousVersion || !currentVersion || previousVersion === currentVersion) return [];
+      if (!previousFingerprint || !currentFingerprint) return [];
+
+      const previousCanonicalSha256 = previousFingerprint.canonicalSha256;
+      const currentCanonicalSha256 = currentFingerprint.canonicalSha256;
+      const classification: McpSemanticVersionReceipt['classification'] =
+        previousCanonicalSha256 === currentCanonicalSha256
+          ? 'version-only-increment'
+          : 'semantic-change';
+      const rationale =
+        classification === 'version-only-increment'
+          ? `Registry version changed from ${previousVersion} to ${currentVersion}, but canonical title/description/schema/remotes are unchanged.`
+          : `Registry version changed from ${previousVersion} to ${currentVersion} and canonical title/description/schema/remotes changed.`;
+
+      return [
+        signSemanticVersionReceipt({
+          server,
+          previousVersion,
+          currentVersion,
+          previousCanonicalSha256,
+          currentCanonicalSha256,
+          classification,
+          rationale,
+        }),
+      ];
+    })
+    .sort((a, b) => a.server.localeCompare(b.server));
+}
 
 function detectAgentUriLineage(
   currentByServer: Map<string, McpSweepEntry>,
@@ -89,6 +167,10 @@ export function diffMcpSweepReports(
 ): McpSweepDiff {
   const currentByServer = new Map(current.entries.map((entry) => [entry.server, entry]));
   const previousByServer = new Map(previous.entries.map((entry) => [entry.server, entry]));
+  const semanticVersionReceipts = detectSemanticVersionReceipts(currentByServer, previousByServer);
+  const semanticVersionReceiptByServer = new Map(
+    semanticVersionReceipts.map((receipt) => [receipt.server, receipt])
+  );
   const addedServers = current.entries
     .filter((entry) => !previousByServer.has(entry.server))
     .map((entry) => entry.server)
@@ -102,16 +184,19 @@ export function diffMcpSweepReports(
     .map((entry) => {
       const previousEntry = previousByServer.get(entry.server)!;
       const delta = isScored(entry) && isScored(previousEntry) ? entry.score - previousEntry.score : null;
+      const semanticVersionReceipt = semanticVersionReceiptByServer.get(entry.server);
       return {
         server: entry.server,
         previousScore: previousEntry.score,
         currentScore: entry.score,
         delta,
+        ...(semanticVersionReceipt ? { semanticVersionReceipt } : {}),
       };
     })
     .filter(
       (entry) =>
-        entry.delta !== 0 && (entry.previousScore !== null || entry.currentScore !== null)
+        (entry.delta !== 0 || entry.semanticVersionReceipt) &&
+        (entry.previousScore !== null || entry.currentScore !== null)
     )
     .sort((a, b) => {
       const aAbs = a.delta === null ? Number.POSITIVE_INFINITY : Math.abs(a.delta);
@@ -128,6 +213,7 @@ export function diffMcpSweepReports(
     addedServers,
     removedServers,
     scoreChanges,
+    semanticVersionReceipts,
     agentUriLineage: detectAgentUriLineage(currentByServer, previousByServer),
     endpointDeprecations: [],
   };
