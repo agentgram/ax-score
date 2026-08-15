@@ -1,6 +1,7 @@
 import type {
   AuditResult,
   AXCategory,
+  Erc8004ValidationLineageEvidence,
   McpConfig,
   McpRegistryRecord,
   McpReport,
@@ -340,18 +341,42 @@ function entryFromMcpReport(report: McpReport, record: McpRegistryRecord): McpSw
   }
   const erc8004Audit = report.audits['erc8004-registration-service-binding'];
   const erc8004Items = erc8004Audit?.details?.items ?? [];
+  const erc8004ServiceItems = erc8004Items.filter((item) => item['kind'] !== 'erc8004-validation-lineage');
   const registrationSha256 =
-    erc8004Items
+    erc8004ServiceItems
       .map((item) => item['registrationSha256'])
       .find((value): value is string => typeof value === 'string') ?? null;
   const a2aMcpServiceReattested =
-    erc8004Items.length > 0 && erc8004Items.every((item) => item['re' + 'attested'] === true);
+    erc8004ServiceItems.length > 0 && erc8004ServiceItems.every((item) => item['re' + 'attested'] === true);
+  const validationLineage = erc8004Items
+    .filter((item) => item['kind'] === 'erc8004-validation-lineage')
+    .map((item) => ({
+      requestHash: item['requestHash'],
+      validator: item['validator'],
+      responseCount: item['responseCount'],
+      orderedTags: item['orderedTags'],
+      latestTag: item['latestTag'],
+      latestScore: item['latestScore'],
+      allResponsesBound: item['allResponsesBound'],
+      allResponseHashesVerified: item['allResponseHashesVerified'],
+      responses: item['responses'],
+    }))
+    .filter((item): item is Erc8004ValidationLineageEvidence =>
+      typeof item.requestHash === 'string' &&
+      typeof item.validator === 'string' &&
+      typeof item.responseCount === 'number' &&
+      Array.isArray(item.orderedTags) &&
+      typeof item.allResponsesBound === 'boolean' &&
+      typeof item.allResponseHashesVerified === 'boolean' &&
+      Array.isArray(item.responses)
+    );
   return {
     server: report.server,
     serverVersion: report.serverVersion,
     agentURI: record.server.erc8004?.agentURI ?? record.server.erc8004?.agentUri ?? record.server.agentURI ?? record.server.agentUri ?? null,
     registrationSha256,
     a2aMcpServiceReattested,
+    ...(validationLineage.length > 0 ? { validationLineage } : {}),
     remoteUrls: remoteUrlsFromRecord(record),
     registryStatus: record.meta?.status ?? null,
     semanticVersionFingerprint: buildSemanticVersionFingerprint(record),
