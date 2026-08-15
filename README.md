@@ -137,7 +137,7 @@ npx @agentgram/ax-score mcp-report \
   --published-base-url https://ax-score.example/reports/
 ```
 
-The markdown report includes hosted artifact links and a historical diff summary, while the manifest records the JSON/markdown/manifest paths, hosted URLs, and machine-readable score changes for stakeholder review.
+The markdown report includes hosted artifact links and a historical diff summary, while the manifest records the JSON/markdown/manifest paths, hosted URLs, machine-readable score changes, and ERC-8004 agent URI lineage changes for stakeholder review. Lineage entries mark whether a server changed `agentURI` or registration content between sweeps and whether reputation weight is retained after A2A/MCP services are re-attested.
 
 The repository also includes a scheduled publishing pipeline at `.github/workflows/mcp-registry-report.yml`. It builds the CLI, runs the official Registry sweep weekly (or on demand via `workflow_dispatch`), uploads the JSON/markdown/manifest artifacts, compares against the previously published report when one exists, and deploys a small static report index to GitHub Pages for operator and stakeholder review.
 
@@ -208,6 +208,8 @@ The audit exports service-binding evidence in JSON reports so operators can insp
 When the registration file also advertises ERC-8004 progressive validation requests, the same audit exports `validationLineage` receipts in sweep JSON entries. Each receipt groups responses by `requestHash` and original validator, verifies `responseURI` content against `responseHash` when present, preserves response order/tags, and marks the latest score/tag state so downstream reputation consumers do not collapse soft and final validator updates into one opaque score.
 
 Remote reachability and TLS audit details also include DNS resolution policy, redirect-chain, and fetch-decision receipt fields. This keeps MCP sweep results auditable without silently penalizing servers that have not adopted ERC-8004 metadata yet.
+
+When `mcp-report` compares a current report with `--diff-from`, the manifest also includes an `agentUriLineage` diff array for servers whose `agentURI` or registration hash changed. Each lineage record carries the previous/current registration evidence, the transition type (`agent-uri-changed` or `registration-hash-changed`), and `reputationWeightRetained`, which is true only after the current A2A/MCP service bindings were re-attested.
 
 ### Known limitations (v1)
 
