@@ -1,10 +1,16 @@
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
 import type {
   AgentRegistrationService,
+  AgentReviewerContribution,
+  AgentReviewerExclusion,
   AgentServiceBindingEvidence,
   AgentValidationRequest,
   AgentValidationResponse,
   Erc8004AgentIdentityRef,
+  Erc8004ReputationExportSignature,
+  Erc8004ReviewerContributionEvidence,
+  Erc8004ReviewerExclusionEvidence,
+  Erc8004ReviewerFilterSnapshotEvidence,
   Erc8004ValidationLineageEvidence,
   Erc8004ValidationResponseEvidence,
   McpConfig,
@@ -127,8 +133,100 @@ function validationRequests(document: unknown): AgentValidationRequest[] {
         requestHash: normalizeString(request['requestHash']),
         validator: normalizeString(request['validator']),
         validationResponses: responses,
+        reviewerFilterSnapshot: request['reviewerFilterSnapshot'] ?? request['reviewerFilter'] ?? request['filterSnapshot'] ?? request['filters'],
+        aggregationPolicy: request['aggregationPolicy'] ?? request['aggregation'],
+        reviewerContributions: normalizeReviewerContributions(request['reviewerContributions'] ?? request['contributions']),
+        reviewerExclusions: normalizeReviewerExclusions(request['reviewerExclusions'] ?? request['excludedReviewers'] ?? request['exclusions']),
       };
     });
+}
+
+function stringArrayFrom(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.length > 0).sort()
+    : [];
+}
+
+function reviewerFilterSnapshot(snapshot: unknown): Erc8004ReviewerFilterSnapshotEvidence | null {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  const record = snapshot as Record<string, unknown>;
+  const reviewers = stringArrayFrom(record['reviewers'] ?? record['reviewerIds'] ?? record['reviewerAddresses']);
+  const clients = stringArrayFrom(record['clients'] ?? record['clientIds'] ?? record['clientAddresses']);
+  return {
+    reviewers,
+    clients,
+    snapshotSha256: createHash('sha256').update(stableJson(snapshot)).digest('hex'),
+    nonEmpty: reviewers.length > 0 || clients.length > 0,
+  };
+}
+
+function normalizeReviewerContributions(value: unknown): AgentReviewerContribution[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+    .map((item) => ({
+      reviewer: normalizeString(item['reviewer'] ?? item['reviewerId'] ?? item['reviewerAddress']),
+      client: normalizeString(item['client'] ?? item['clientId'] ?? item['clientAddress']),
+      score: normalizeNumber(item['score']),
+      weight: normalizeNumber(item['weight']),
+    }));
+}
+
+function normalizeReviewerExclusions(value: unknown): AgentReviewerExclusion[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+    .map((item) => ({
+      reviewer: normalizeString(item['reviewer'] ?? item['reviewerId'] ?? item['reviewerAddress']),
+      client: normalizeString(item['client'] ?? item['clientId'] ?? item['clientAddress']),
+      reason: normalizeString(item['reason'] ?? item['exclusionReason']),
+    }));
+}
+
+function reviewerContributions(contributions: AgentReviewerContribution[]): Erc8004ReviewerContributionEvidence[] {
+  return contributions
+    .filter((contribution) => typeof contribution.reviewer === 'string' && contribution.reviewer.length > 0)
+    .map((contribution) => ({
+      reviewer: contribution.reviewer!,
+      client: contribution.client ?? null,
+      score: contribution.score ?? null,
+      weight: contribution.weight ?? null,
+    }))
+    .sort((a, b) => a.reviewer.localeCompare(b.reviewer) || (a.client ?? '').localeCompare(b.client ?? ''));
+}
+
+function reviewerExclusions(exclusions: AgentReviewerExclusion[]): Erc8004ReviewerExclusionEvidence[] {
+  return exclusions
+    .filter((exclusion) => typeof exclusion.reviewer === 'string' && exclusion.reviewer.length > 0 && typeof exclusion.reason === 'string' && exclusion.reason.length > 0)
+    .map((exclusion) => ({
+      reviewer: exclusion.reviewer!,
+      client: exclusion.client ?? null,
+      reason: exclusion.reason!,
+    }))
+    .sort((a, b) => a.reviewer.localeCompare(b.reviewer) || a.reason.localeCompare(b.reason));
+}
+
+function signReviewerFilterReputationExport(payload: {
+  requestHash: string;
+  validator: string;
+  reviewerFilterSnapshot: Erc8004ReviewerFilterSnapshotEvidence;
+  reviewerContributions: Erc8004ReviewerContributionEvidence[];
+  reviewerExclusions: Erc8004ReviewerExclusionEvidence[];
+  aggregationPolicySha256: string;
+}): Erc8004ReputationExportSignature {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const publicKey = createPublicKey(privateKey);
+  const signedAt = new Date().toISOString();
+  const signaturePayload = { ...payload, signedAt };
+  const canonicalPayload = stableJson(signaturePayload);
+  return {
+    signatureAlgorithm: 'ed25519',
+    canonicalization: 'json-stable-v1',
+    payloadSha256: createHash('sha256').update(canonicalPayload).digest('hex'),
+    signatureBase64: sign(null, Buffer.from(canonicalPayload), privateKey).toString('base64'),
+    publicKeyBase64: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+    signedAt,
+  };
 }
 
 function isA2aOrMcpService(service: AgentRegistrationService): boolean {
@@ -211,6 +309,28 @@ export async function buildProgressiveValidationLineage(args: { validationReques
       };
     }));
     const latest = responses.at(-1);
+    const filterSnapshot = reviewerFilterSnapshot(request.reviewerFilterSnapshot);
+    const contributions = reviewerContributions(request.reviewerContributions ?? []);
+    const exclusions = reviewerExclusions(request.reviewerExclusions ?? []);
+    const aggregationPolicySha256 = request.aggregationPolicy === undefined
+      ? null
+      : createHash('sha256').update(stableJson(request.aggregationPolicy)).digest('hex');
+    const reviewerFilterProvenanceComplete = Boolean(
+      filterSnapshot?.nonEmpty &&
+      contributions.length > 0 &&
+      exclusions.length > 0 &&
+      aggregationPolicySha256
+    );
+    const reputationExportSignature = reviewerFilterProvenanceComplete
+      ? signReviewerFilterReputationExport({
+          requestHash: request.requestHash,
+          validator: request.validator,
+          reviewerFilterSnapshot: filterSnapshot!,
+          reviewerContributions: contributions,
+          reviewerExclusions: exclusions,
+          aggregationPolicySha256: aggregationPolicySha256!,
+        })
+      : null;
     return [{
       requestHash: request.requestHash,
       validator: request.validator,
@@ -220,6 +340,12 @@ export async function buildProgressiveValidationLineage(args: { validationReques
       latestScore: latest?.score ?? null,
       allResponsesBound: responses.length > 0 && responses.every((response) => response.requestHashMatches && response.validatorMatchesRequest),
       allResponseHashesVerified: responses.length > 0 && responses.every((response) => response.responseHashVerified === true),
+      reviewerFilterSnapshot: filterSnapshot,
+      reviewerContributions: contributions,
+      reviewerExclusions: exclusions,
+      aggregationPolicySha256,
+      reviewerFilterProvenanceComplete,
+      reputationExportSignature,
       responses,
     }];
   }));

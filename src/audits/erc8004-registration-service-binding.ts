@@ -42,13 +42,19 @@ export class Erc8004RegistrationBindingAudit extends McpBaseAudit {
       latestScore: lineage.latestScore,
       allResponsesBound: lineage.allResponsesBound,
       allResponseHashesVerified: lineage.allResponseHashesVerified,
+      reviewerFilterSnapshot: lineage.reviewerFilterSnapshot,
+      reviewerContributions: lineage.reviewerContributions,
+      reviewerExclusions: lineage.reviewerExclusions,
+      aggregationPolicySha256: lineage.aggregationPolicySha256,
+      reviewerFilterProvenanceComplete: lineage.reviewerFilterProvenanceComplete,
+      reputationExportSignature: lineage.reputationExportSignature,
       responses: lineage.responses,
     }));
     const verified = bindings.filter((binding) => binding.tls && binding.signatureAlgorithm === 'ed25519' && (binding.domainControl === 'same-host' || binding.domainControl === 'same-registrable-domain'));
-    const verifiedLineage = validationLineage.filter((lineage) => lineage.allResponsesBound && lineage.allResponseHashesVerified);
+    const verifiedLineage = validationLineage.filter((lineage) => lineage.allResponsesBound && lineage.allResponseHashesVerified && lineage.reviewerFilterProvenanceComplete);
     const evaluableGroups = (bindings.length > 0 ? 1 : 0) + (validationLineage.length > 0 ? 1 : 0);
     const score = ((bindings.length > 0 ? verified.length / bindings.length : 0) + (validationLineage.length > 0 ? verifiedLineage.length / validationLineage.length : 0)) / evaluableGroups;
-    const summary = `${verified.length}/${bindings.length} ERC-8004 A2A/MCP service bindings carry TLS, domain-control, redirect, and Ed25519 evidence. ${verifiedLineage.length}/${validationLineage.length} validation request lineage receipts bind every response to requestHash/original validator, verify responseURI content against responseHash, and export response order, tags, and latest state.`;
+    const summary = `${verified.length}/${bindings.length} ERC-8004 A2A/MCP service bindings carry TLS, domain-control, redirect, and Ed25519 evidence. ${verifiedLineage.length}/${validationLineage.length} validation request lineage receipts bind every response to requestHash/original validator, verify responseURI content against responseHash, export response order, tags, latest state, and include non-empty reviewer/client filter provenance with per-reviewer contribution, exclusion reasons, aggregation policy hash, and Ed25519-signed reputation export.`;
     const allItems = [...items, ...validationLineageItems];
     if (score >= 1) return this.pass({ type: 'table', items: allItems, summary });
     if (score <= 0) return this.fail({ type: 'table', items: allItems, summary });

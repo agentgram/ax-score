@@ -359,6 +359,12 @@ function entryFromMcpReport(report: McpReport, record: McpRegistryRecord): McpSw
       latestScore: item['latestScore'],
       allResponsesBound: item['allResponsesBound'],
       allResponseHashesVerified: item['allResponseHashesVerified'],
+      reviewerFilterSnapshot: item['reviewerFilterSnapshot'],
+      reviewerContributions: item['reviewerContributions'],
+      reviewerExclusions: item['reviewerExclusions'],
+      aggregationPolicySha256: item['aggregationPolicySha256'],
+      reviewerFilterProvenanceComplete: item['reviewerFilterProvenanceComplete'],
+      reputationExportSignature: item['reputationExportSignature'],
       responses: item['responses'],
     }))
     .filter((item): item is Erc8004ValidationLineageEvidence =>
@@ -368,6 +374,12 @@ function entryFromMcpReport(report: McpReport, record: McpRegistryRecord): McpSw
       Array.isArray(item.orderedTags) &&
       typeof item.allResponsesBound === 'boolean' &&
       typeof item.allResponseHashesVerified === 'boolean' &&
+      (item.reviewerFilterSnapshot === null || typeof item.reviewerFilterSnapshot === 'object') &&
+      Array.isArray(item.reviewerContributions) &&
+      Array.isArray(item.reviewerExclusions) &&
+      (item.aggregationPolicySha256 === null || typeof item.aggregationPolicySha256 === 'string') &&
+      typeof item.reviewerFilterProvenanceComplete === 'boolean' &&
+      (item.reputationExportSignature === null || typeof item.reputationExportSignature === 'object') &&
       Array.isArray(item.responses)
     );
   return {

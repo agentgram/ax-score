@@ -123,12 +123,58 @@ export interface AgentValidationResponse {
   transactionHash?: string;
 }
 
+export interface AgentReviewerContribution {
+  reviewer?: string;
+  client?: string;
+  score?: number;
+  weight?: number;
+}
+
+export interface AgentReviewerExclusion {
+  reviewer?: string;
+  client?: string;
+  reason?: string;
+}
+
 /** ERC-8004 validation request plus its repeated validator responses. */
 export interface AgentValidationRequest {
   requestHash?: string;
   validator?: string;
   validationResponses?: AgentValidationResponse[];
   responses?: AgentValidationResponse[];
+  reviewerFilterSnapshot?: unknown;
+  aggregationPolicy?: unknown;
+  reviewerContributions?: AgentReviewerContribution[];
+  reviewerExclusions?: AgentReviewerExclusion[];
+}
+
+export interface Erc8004ReviewerFilterSnapshotEvidence {
+  reviewers: string[];
+  clients: string[];
+  snapshotSha256: string;
+  nonEmpty: boolean;
+}
+
+export interface Erc8004ReviewerContributionEvidence {
+  reviewer: string;
+  client: string | null;
+  score: number | null;
+  weight: number | null;
+}
+
+export interface Erc8004ReviewerExclusionEvidence {
+  reviewer: string;
+  client: string | null;
+  reason: string;
+}
+
+export interface Erc8004ReputationExportSignature {
+  signatureAlgorithm: 'ed25519';
+  canonicalization: 'json-stable-v1';
+  payloadSha256: string;
+  signatureBase64: string;
+  publicKeyBase64: string;
+  signedAt: string;
 }
 
 export interface Erc8004ValidationResponseEvidence {
@@ -158,6 +204,12 @@ export interface Erc8004ValidationLineageEvidence {
   latestScore: number | null;
   allResponsesBound: boolean;
   allResponseHashesVerified: boolean;
+  reviewerFilterSnapshot: Erc8004ReviewerFilterSnapshotEvidence | null;
+  reviewerContributions: Erc8004ReviewerContributionEvidence[];
+  reviewerExclusions: Erc8004ReviewerExclusionEvidence[];
+  aggregationPolicySha256: string | null;
+  reviewerFilterProvenanceComplete: boolean;
+  reputationExportSignature: Erc8004ReputationExportSignature | null;
   responses: Erc8004ValidationResponseEvidence[];
 }
 

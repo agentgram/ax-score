@@ -26,6 +26,26 @@ function makeRegistrationArtifact(
   };
 }
 
+function reviewerFilterProvenance() {
+  return {
+    reviewerFilterSnapshot: {
+      reviewers: ['0xreviewer-a', '0xreviewer-b'],
+      clients: ['0xclient-a'],
+    },
+    aggregationPolicy: {
+      id: 'median-trimmed-v1',
+      minReviewerReputation: 70,
+      trimOutliers: true,
+    },
+    reviewerContributions: [
+      { reviewer: '0xreviewer-a', client: '0xclient-a', score: 91, weight: 0.8 },
+    ],
+    reviewerExclusions: [
+      { reviewer: '0xreviewer-b', client: '0xclient-a', reason: 'below-minimum-reputation' },
+    ],
+  };
+}
+
 describe('buildAgentServiceBindings', () => {
   it('should bind A2A and MCP registration services to matching remote evidence', () => {
     const bindings = buildAgentServiceBindings({
@@ -68,6 +88,7 @@ describe('buildProgressiveValidationLineage', () => {
         {
           requestHash: '0xrequest',
           validator: '0xvalidator',
+          ...reviewerFilterProvenance(),
           validationResponses: [
             {
               score: 60,
@@ -99,8 +120,26 @@ describe('buildProgressiveValidationLineage', () => {
         latestScore: 94,
         allResponsesBound: true,
         allResponseHashesVerified: true,
+        reviewerFilterProvenanceComplete: true,
       }),
     ]);
+    expect(lineage[0]!.reviewerFilterSnapshot).toMatchObject({
+      reviewers: ['0xreviewer-a', '0xreviewer-b'],
+      clients: ['0xclient-a'],
+      nonEmpty: true,
+    });
+    expect(lineage[0]!.reviewerContributions).toEqual([
+      { reviewer: '0xreviewer-a', client: '0xclient-a', score: 91, weight: 0.8 },
+    ]);
+    expect(lineage[0]!.reviewerExclusions).toEqual([
+      { reviewer: '0xreviewer-b', client: '0xclient-a', reason: 'below-minimum-reputation' },
+    ]);
+    expect(lineage[0]!.aggregationPolicySha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(lineage[0]!.reputationExportSignature).toMatchObject({
+      signatureAlgorithm: 'ed25519',
+      canonicalization: 'json-stable-v1',
+    });
+    expect(lineage[0]!.reputationExportSignature?.payloadSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(lineage[0]!.responses.map((response) => response.isLatest)).toEqual([false, true]);
     expect(lineage[0]!.responses.every((response) => response.requestHash === '0xrequest' && response.validator === '0xvalidator')).toBe(true);
   });
@@ -167,6 +206,7 @@ describe('Erc8004RegistrationBindingAudit', () => {
       validationRequests: [{
         requestHash: '0xrequest',
         validator: '0xvalidator',
+        ...reviewerFilterProvenance(),
         validationResponses: [{
           score: 91,
           responseURI: `data:text/plain,${encodeURIComponent(payload)}`,
@@ -192,6 +232,42 @@ describe('Erc8004RegistrationBindingAudit', () => {
       latestScore: 91,
       allResponsesBound: true,
       allResponseHashesVerified: true,
+      reviewerFilterProvenanceComplete: true,
+      reviewerContributions: [{ reviewer: '0xreviewer-a', client: '0xclient-a', score: 91, weight: 0.8 }],
+      reviewerExclusions: [{ reviewer: '0xreviewer-b', client: '0xclient-a', reason: 'below-minimum-reputation' }],
+    }));
+    expect(result.details?.items).toContainEqual(expect.objectContaining({
+      kind: 'erc8004-validation-lineage',
+      aggregationPolicySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      reputationExportSignature: expect.objectContaining({ signatureAlgorithm: 'ed25519' }),
+    }));
+  });
+
+  it('should fail progressive validation lineage without reviewer filter provenance', async () => {
+    const payload = 'final response evidence';
+    const validationLineage = await buildProgressiveValidationLineage({
+      validationRequests: [{
+        requestHash: '0xrequest',
+        validator: '0xvalidator',
+        validationResponses: [{
+          score: 91,
+          responseURI: `data:text/plain,${encodeURIComponent(payload)}`,
+          responseHash: createHash('sha256').update(payload).digest('hex'),
+          tag: 'final',
+        }],
+      }],
+      timeout: 100,
+    });
+    const result = await audit.audit({
+      ...makeMcpArtifacts(),
+      erc8004Registration: makeRegistrationArtifact({ bindings: [], validationLineage }),
+    });
+
+    expect(result.score).toBe(0);
+    expect(result.details?.items).toContainEqual(expect.objectContaining({
+      kind: 'erc8004-validation-lineage',
+      reviewerFilterProvenanceComplete: false,
+      reputationExportSignature: null,
     }));
   });
 

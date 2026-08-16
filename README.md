@@ -205,7 +205,7 @@ The audit exports service-binding evidence in JSON reports so operators can insp
 - an Ed25519 fetch-decision receipt for the probe decision
 - optional `agentId`, `identityRegistry`, and `chainId` metadata from the registry record
 
-When the registration file also advertises ERC-8004 progressive validation requests, the same audit exports `validationLineage` receipts in sweep JSON entries. Each receipt groups responses by `requestHash` and original validator, verifies `responseURI` content against `responseHash` when present, preserves response order/tags, and marks the latest score/tag state so downstream reputation consumers do not collapse soft and final validator updates into one opaque score.
+When the registration file also advertises ERC-8004 progressive validation requests, the same audit exports `validationLineage` receipts in sweep JSON entries. Each receipt groups responses by `requestHash` and original validator, verifies `responseURI` content against `responseHash` when present, preserves response order/tags, and marks the latest score/tag state so downstream reputation consumers do not collapse soft and final validator updates into one opaque score. A lineage receipt now counts as verified only when it also includes a non-empty reviewer/client filter snapshot, per-reviewer contribution records, reviewer exclusion reasons, an aggregation-policy hash, and an Ed25519-signed reputation export receipt so third parties can reproduce Sybil-filter controls.
 
 Remote reachability and TLS audit details also include DNS resolution policy, redirect-chain, and fetch-decision receipt fields. This keeps MCP sweep results auditable without silently penalizing servers that have not adopted ERC-8004 metadata yet.
 

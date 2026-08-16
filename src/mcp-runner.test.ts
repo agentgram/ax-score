@@ -226,6 +226,13 @@ describe('runMcpSweep', () => {
       validationRequests: [{
         requestHash: '0xrequest',
         validator: '0xvalidator',
+        reviewerFilterSnapshot: {
+          reviewers: ['0xreviewer-a', '0xreviewer-b'],
+          clients: ['0xclient-a'],
+        },
+        aggregationPolicy: { id: 'median-trimmed-v1', minReviewerReputation: 70 },
+        reviewerContributions: [{ reviewer: '0xreviewer-a', client: '0xclient-a', score: 93, weight: 1 }],
+        reviewerExclusions: [{ reviewer: '0xreviewer-b', client: '0xclient-a', reason: 'below-minimum-reputation' }],
         validationResponses: [{
           score: 93,
           responseURI: `data:text/plain,${encodeURIComponent(responseBody)}`,
@@ -256,8 +263,15 @@ describe('runMcpSweep', () => {
         latestScore: 93,
         allResponsesBound: true,
         allResponseHashesVerified: true,
+        reviewerFilterProvenanceComplete: true,
       }),
     ]);
+    expect(entry.validationLineage?.[0]?.reviewerFilterSnapshot).toMatchObject({
+      reviewers: ['0xreviewer-a', '0xreviewer-b'],
+      clients: ['0xclient-a'],
+      nonEmpty: true,
+    });
+    expect(entry.validationLineage?.[0]?.reputationExportSignature?.signatureAlgorithm).toBe('ed25519');
     expect(entry.validationLineage?.[0]?.responses[0]).toMatchObject({
       order: 1,
       requestHashMatches: true,
