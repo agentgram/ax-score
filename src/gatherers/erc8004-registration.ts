@@ -1,9 +1,15 @@
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import type {
   AgentRegistrationService,
   AgentServiceBindingEvidence,
   AgentValidationRequest,
   AgentValidationResponse,
+  Erc8004FeedbackFetchDecisionPayload,
+  Erc8004FeedbackFetchDecisionReceipt,
+  Erc8004FeedbackRedirectEvidence,
+  Erc8004FeedbackResolutionEvidence,
   Erc8004AgentIdentityRef,
   Erc8004ValidationLineageEvidence,
   Erc8004ValidationResponseEvidence,
@@ -17,6 +23,7 @@ import { DEFAULT_TIMEOUT } from '../config/default.js';
 import { isPrivateHost } from './mcp-remote.js';
 
 const USER_AGENT = 'AX-Score/1.0 (erc8004-registration-binding)';
+const MAX_FEEDBACK_REDIRECTS = 5;
 
 export interface AgentRegistrationDocument { services?: AgentRegistrationService[]; validationRequests?: AgentValidationRequest[]; }
 export interface Erc8004RegistrationGatherResult extends GatherResult {
@@ -101,6 +108,8 @@ function validationResponseFromRecord(record: Record<string, unknown>): AgentVal
     requestHash: normalizeString(record['requestHash']),
     validator: normalizeString(record['validator']),
     score: normalizeNumber(record['score']),
+    feedbackURI: normalizeString(record['feedbackURI'] ?? record['feedbackUri']),
+    feedbackHash: normalizeString(record['feedbackHash']),
     responseURI: normalizeString(record['responseURI'] ?? record['responseUri']),
     responseHash: normalizeString(record['responseHash']),
     tag: normalizeString(record['tag']),
@@ -156,31 +165,145 @@ function normalizeSha256(value: string | undefined): string | null {
   return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
 }
 
-async function fetchResponseBody(responseURI: string, timeout: number): Promise<Uint8Array> {
-  if (responseURI.startsWith('data:')) {
-    const response = await fetch(responseURI);
-    return new Uint8Array(await response.arrayBuffer());
-  }
-  const parsed = new URL(responseURI);
-  if (parsed.protocol !== 'https:') throw new Error('Only HTTPS and data: responseURI verification is supported.');
-  if (isPrivateHost(parsed.hostname)) throw new Error('responseURI resolves to a private/link-local host.');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-  try {
-    const response = await fetch(responseURI, { signal: controller.signal, headers: { 'User-Agent': USER_AGENT }, redirect: 'follow' });
-    if (!response.ok) throw new Error(`responseURI responded with HTTP ${response.status}.`);
-    return new Uint8Array(await response.arrayBuffer());
-  } finally { clearTimeout(timer); }
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`;
 }
 
-async function verifyResponseHash(responseURI: string | undefined, responseHash: string | undefined, timeout: number): Promise<boolean | null> {
-  const expected = normalizeSha256(responseHash);
-  if (!responseURI || !expected) return null;
+function signFeedbackDecision(payload: Erc8004FeedbackFetchDecisionPayload): Erc8004FeedbackFetchDecisionReceipt {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const publicKey = createPublicKey(privateKey);
+  return {
+    signatureAlgorithm: 'ed25519',
+    canonicalization: 'json-stable-v1',
+    decisionPayload: payload,
+    signature: sign(null, Buffer.from(stableStringify(payload)), privateKey).toString('base64'),
+    publicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+  };
+}
+
+async function resolveFeedbackHost(hostname: string): Promise<Erc8004FeedbackResolutionEvidence[]> {
+  const literalFamily = isIP(hostname);
+  if (literalFamily === 4 || literalFamily === 6) {
+    return [{ hostname, address: hostname, family: literalFamily, source: 'literal', privateHost: isPrivateHost(hostname) }];
+  }
+
   try {
-    const body = await fetchResponseBody(responseURI, timeout);
-    return createHash('sha256').update(body).digest('hex') === expected;
+    const entries = await lookup(hostname, { all: true, verbatim: true });
+    return entries.map((entry) => ({
+      hostname,
+      address: entry.address,
+      family: entry.family === 6 ? 6 : 4,
+      source: 'dns',
+      privateHost: isPrivateHost(entry.address),
+    }));
+  } catch (err) {
+    return [{ hostname, address: null, family: null, source: 'dns', error: err instanceof Error ? err.message : 'DNS lookup failed', privateHost: false }];
+  }
+}
+
+function blockedFeedbackReceipt(
+  url: string,
+  reason: string,
+  evidence: Erc8004FeedbackResolutionEvidence[] = [],
+  redirects: Erc8004FeedbackRedirectEvidence[] = []
+): Erc8004FeedbackFetchDecisionReceipt {
+  return signFeedbackDecision({ url, allowed: false, reason, evidence, redirects, integritySha256: null, integrityVerified: false });
+}
+
+async function fetchFeedbackPayload(feedbackURI: string, timeout: number): Promise<{ body: Uint8Array | null; receipt: Erc8004FeedbackFetchDecisionReceipt; }> {
+  if (feedbackURI.startsWith('data:')) {
+    const response = await fetch(feedbackURI);
+    const body = new Uint8Array(await response.arrayBuffer());
+    const integritySha256 = createHash('sha256').update(body).digest('hex');
+    return {
+      body,
+      receipt: signFeedbackDecision({
+        url: feedbackURI,
+        allowed: true,
+        reason: 'Data feedbackURI payload was read without network dereferencing.',
+        evidence: [],
+        redirects: [],
+        integritySha256,
+        integrityVerified: null,
+      }),
+    };
+  }
+
+  let currentUrl = feedbackURI;
+  const redirectChain: Erc8004FeedbackRedirectEvidence[] = [];
+  let resolutionEvidence: Erc8004FeedbackResolutionEvidence[] = [];
+
+  for (let redirects = 0; redirects <= MAX_FEEDBACK_REDIRECTS; redirects++) {
+    let parsed: URL;
+    try {
+      parsed = new URL(currentUrl);
+    } catch {
+      return { body: null, receipt: blockedFeedbackReceipt(currentUrl, 'feedbackURI URL is invalid.', resolutionEvidence, redirectChain) };
+    }
+
+    if (parsed.protocol !== 'https:') {
+      return { body: null, receipt: blockedFeedbackReceipt(currentUrl, 'Only HTTPS and data: feedbackURI verification is supported.', resolutionEvidence, redirectChain) };
+    }
+
+    const evidence = await resolveFeedbackHost(parsed.hostname);
+    resolutionEvidence = [...resolutionEvidence, ...evidence];
+    if (isPrivateHost(parsed.hostname) || evidence.some((item) => item.privateHost)) {
+      return { body: null, receipt: blockedFeedbackReceipt(currentUrl, 'feedbackURI resolves to a private/link-local/loopback target.', resolutionEvidence, redirectChain) };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(currentUrl, { signal: controller.signal, headers: { 'User-Agent': USER_AGENT }, redirect: 'manual' });
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get('location');
+        if (location && redirects < MAX_FEEDBACK_REDIRECTS) {
+          const nextUrl = new URL(location, currentUrl).toString();
+          redirectChain.push({ from: currentUrl, to: nextUrl, statusCode: response.status });
+          currentUrl = nextUrl;
+          continue;
+        }
+        return { body: null, receipt: blockedFeedbackReceipt(currentUrl, 'feedbackURI exceeded redirect limit.', resolutionEvidence, redirectChain) };
+      }
+      if (!response.ok) return { body: null, receipt: blockedFeedbackReceipt(currentUrl, `feedbackURI responded with HTTP ${response.status}.`, resolutionEvidence, redirectChain) };
+      const body = new Uint8Array(await response.arrayBuffer());
+      const integritySha256 = createHash('sha256').update(body).digest('hex');
+      return {
+        body,
+        receipt: signFeedbackDecision({
+          url: currentUrl,
+          allowed: true,
+          reason: 'feedbackURI payload fetched after safe DNS/IP and redirect checks.',
+          evidence: resolutionEvidence,
+          redirects: redirectChain,
+          integritySha256,
+          integrityVerified: null,
+        }),
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return { body: null, receipt: blockedFeedbackReceipt(currentUrl, 'feedbackURI exceeded redirect limit.', resolutionEvidence, redirectChain) };
+}
+
+async function verifyResponseHash(responseURI: string | undefined, responseHash: string | undefined, timeout: number): Promise<{ verified: boolean | null; receipt: Erc8004FeedbackFetchDecisionReceipt | null; }> {
+  const expected = normalizeSha256(responseHash);
+  if (!responseURI || !expected) return { verified: null, receipt: null };
+  try {
+    const result = await fetchFeedbackPayload(responseURI, timeout);
+    const actual = result.body ? createHash('sha256').update(result.body).digest('hex') : null;
+    const verified = actual === expected;
+    return {
+      verified,
+      receipt: signFeedbackDecision({ ...result.receipt.decisionPayload, integritySha256: actual, integrityVerified: verified }),
+    };
   } catch {
-    return false;
+    return { verified: false, receipt: blockedFeedbackReceipt(responseURI, 'feedbackURI verification failed before the payload could enter AX Score aggregation.') };
   }
 }
 
@@ -191,7 +314,10 @@ export async function buildProgressiveValidationLineage(args: { validationReques
     const responses: Erc8004ValidationResponseEvidence[] = await Promise.all(sourceResponses.map(async (response, index) => {
       const responseRequestHash = response.requestHash ?? request.requestHash ?? null;
       const responseValidator = response.validator ?? request.validator ?? null;
-      const normalizedResponseHash = normalizeSha256(response.responseHash);
+      const feedbackURI = response.feedbackURI ?? response.responseURI;
+      const feedbackHash = response.feedbackHash ?? response.responseHash;
+      const normalizedResponseHash = normalizeSha256(feedbackHash);
+      const verification = await verifyResponseHash(feedbackURI, feedbackHash, args.timeout);
       return {
         order: index + 1,
         requestHash: responseRequestHash,
@@ -199,10 +325,11 @@ export async function buildProgressiveValidationLineage(args: { validationReques
         requestHashMatches: responseRequestHash === request.requestHash,
         validatorMatchesRequest: responseValidator === request.validator,
         score: typeof response.score === 'number' && Number.isFinite(response.score) ? response.score : null,
-        responseURI: response.responseURI ?? null,
-        responseHash: normalizedResponseHash ?? response.responseHash ?? null,
-        responseHashVerified: await verifyResponseHash(response.responseURI, response.responseHash, args.timeout),
+        responseURI: feedbackURI ?? null,
+        responseHash: normalizedResponseHash ?? feedbackHash ?? null,
+        responseHashVerified: verification.verified,
         responseHashAlgorithm: normalizedResponseHash ? 'sha256' : null,
+        feedbackFetchDecisionReceipt: verification.receipt,
         tag: response.tag ?? null,
         updatedAt: response.updatedAt ?? null,
         blockNumber: response.blockNumber ?? null,
