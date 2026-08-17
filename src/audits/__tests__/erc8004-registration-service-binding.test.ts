@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Erc8004RegistrationBindingAudit } from '../erc8004-registration-service-binding.js';
 import { buildAgentServiceBindings, buildProgressiveValidationLineage } from '../../gatherers/erc8004-registration.js';
 import { makeMcpArtifacts, makeRemoteProbe, HEALTHY_SERVER } from './mcp-fixtures.js';
@@ -140,6 +140,85 @@ describe('buildProgressiveValidationLineage', () => {
       requestHashMatches: false,
       validatorMatchesRequest: false,
       responseHashVerified: false,
+    });
+  });
+
+  it('requires feedbackURI fetch receipts and feedbackHash integrity before scoring validation lineage', async () => {
+    const payload = 'signed ERC-8004 feedback evidence';
+    const lineage = await buildProgressiveValidationLineage({
+      validationRequests: [
+        {
+          requestHash: '0xrequest',
+          validator: '0xvalidator',
+          validationResponses: [
+            {
+              score: 88,
+              feedbackURI: `data:text/plain,${encodeURIComponent(payload)}`,
+              feedbackHash: createHash('sha256').update(payload).digest('hex'),
+              tag: 'final',
+            },
+          ],
+        },
+      ],
+      timeout: 100,
+    });
+
+    expect(lineage[0]).toMatchObject({
+      allResponsesBound: true,
+      allResponseHashesVerified: true,
+    });
+    expect(lineage[0]!.responses[0]).toMatchObject({
+      responseURI: `data:text/plain,${encodeURIComponent(payload)}`,
+      responseHash: createHash('sha256').update(payload).digest('hex'),
+      responseHashVerified: true,
+      feedbackFetchDecisionReceipt: {
+        signatureAlgorithm: 'ed25519',
+        canonicalization: 'json-stable-v1',
+        decisionPayload: expect.objectContaining({
+          allowed: true,
+          integritySha256: createHash('sha256').update(payload).digest('hex'),
+          integrityVerified: true,
+        }),
+      },
+    });
+  });
+
+  it('blocks private feedbackURI targets with a signed receipt before fetching or scoring them', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const lineage = await buildProgressiveValidationLineage({
+      validationRequests: [
+        {
+          requestHash: '0xrequest',
+          validator: '0xvalidator',
+          validationResponses: [
+            {
+              score: 99,
+              feedbackURI: 'https://127.0.0.1/internal-feedback',
+              feedbackHash: createHash('sha256').update('internal').digest('hex'),
+              tag: 'final',
+            },
+          ],
+        },
+      ],
+      timeout: 100,
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    expect(lineage[0]).toMatchObject({
+      allResponsesBound: true,
+      allResponseHashesVerified: false,
+    });
+    expect(lineage[0]!.responses[0]).toMatchObject({
+      responseHashVerified: false,
+      feedbackFetchDecisionReceipt: {
+        signatureAlgorithm: 'ed25519',
+        decisionPayload: expect.objectContaining({
+          allowed: false,
+          integritySha256: null,
+          integrityVerified: false,
+        }),
+      },
     });
   });
 });

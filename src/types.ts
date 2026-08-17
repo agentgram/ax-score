@@ -115,6 +115,10 @@ export interface AgentValidationResponse {
   requestHash?: string;
   validator?: string;
   score?: number;
+  /** ERC-8004 feedback payload URI. Legacy fixtures may still use responseURI. */
+  feedbackURI?: string;
+  /** Expected SHA-256 digest for the feedback payload. Legacy fixtures may still use responseHash. */
+  feedbackHash?: string;
   responseURI?: string;
   responseHash?: string;
   tag?: string;
@@ -142,11 +146,46 @@ export interface Erc8004ValidationResponseEvidence {
   responseHash: string | null;
   responseHashVerified: boolean | null;
   responseHashAlgorithm: 'sha256' | null;
+  /** Signed allow/block plus integrity evidence for dereferencing feedbackURI/responseURI. */
+  feedbackFetchDecisionReceipt: Erc8004FeedbackFetchDecisionReceipt | null;
   tag: string | null;
   updatedAt: string | null;
   blockNumber: number | null;
   transactionHash: string | null;
   isLatest: boolean;
+}
+
+export interface Erc8004FeedbackResolutionEvidence {
+  hostname: string;
+  address: string | null;
+  family: 4 | 6 | null;
+  source: 'literal' | 'dns';
+  error?: string;
+  privateHost?: boolean;
+}
+
+export interface Erc8004FeedbackRedirectEvidence {
+  from: string;
+  to: string;
+  statusCode: number;
+}
+
+export interface Erc8004FeedbackFetchDecisionPayload {
+  url: string;
+  allowed: boolean;
+  reason: string;
+  evidence: Erc8004FeedbackResolutionEvidence[];
+  redirects: Erc8004FeedbackRedirectEvidence[];
+  integritySha256: string | null;
+  integrityVerified: boolean | null;
+}
+
+export interface Erc8004FeedbackFetchDecisionReceipt {
+  signatureAlgorithm: 'ed25519';
+  canonicalization: 'json-stable-v1';
+  decisionPayload: Erc8004FeedbackFetchDecisionPayload;
+  signature: string;
+  publicKey: string;
 }
 
 export interface Erc8004ValidationLineageEvidence {
