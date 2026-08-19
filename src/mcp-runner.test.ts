@@ -192,6 +192,28 @@ describe('runMcpSweep', () => {
     expect(report.entries[0]!.score).toBeGreaterThan(report.entries[1]!.score ?? 0);
     expect(report.entries[0]!.categoryScores['mcp-metadata']).toBeGreaterThan(0);
     expect(report.entries[0]!.rateLimited).toBe(false);
+    expect(report.entries[0]!.publisherAuthProvenance).toMatchObject({
+      registryNamespace: 'io.github.acme',
+      publisherAuthMethod: 'github-oauth-oidc',
+      verifiedAt: expect.any(String),
+      policyVersion: 'mcp-registry-publisher-auth-v1',
+    });
+    expect(report.entries[0]!.publisherAuthProvenance?.scanReceipt).toMatchObject({
+      signatureAlgorithm: 'ed25519',
+      canonicalization: 'json-stable-v1',
+      payloadSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      signatureBase64: expect.any(String),
+      publicKeyBase64: expect.any(String),
+    });
+    expect(report.entries[0]!.publisherAuthProvenance?.scanReceipt.payload).toMatchObject({
+      server: 'io.github.acme/todo-server',
+      registryNamespace: 'io.github.acme',
+      publisherAuthMethod: 'github-oauth-oidc',
+      score: report.entries[0]!.score,
+    });
+    expect(report.entries[0]!.publisherAuthProvenance?.canonicalEvidenceSha256).toMatch(
+      /^[a-f0-9]{64}$/
+    );
     expect(progress).toHaveLength(2);
   });
 
