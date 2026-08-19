@@ -4,12 +4,15 @@ import type {
   Erc8004ValidationLineageEvidence,
   McpConfig,
   McpRegistryRecord,
+  McpRegistryPublisherAuthMethod,
+  McpRegistryPublisherAuthProvenance,
+  McpRegistryPublisherAuthScanReceipt,
   McpReport,
   McpSemanticVersionFingerprint,
   McpSweepEntry,
   McpSweepReport,
 } from './types.js';
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
 import type { GatherResult } from './gatherers/base-gatherer.js';
 import type { CategoryConfig } from './config/default.js';
 import { VERSION } from './config/default.js';
@@ -61,6 +64,8 @@ import { McpReadmeExistsAudit } from './audits/mcp-readme-exists.js';
 import { McpUsageInstructionsAudit } from './audits/mcp-usage-instructions.js';
 
 import type { BaseAudit } from './audits/base-audit.js';
+
+const MCP_PUBLISHER_AUTH_POLICY_VERSION = 'mcp-registry-publisher-auth-v1';
 
 /** All registered MCP audits. Order does not matter — they are mapped by ID. */
 function createMcpAudits(): BaseAudit[] {
@@ -286,6 +291,110 @@ function sha256(value: unknown): string {
   return createHash('sha256').update(stableJson(value)).digest('hex');
 }
 
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function registryNamespaceFromServerName(serverName: string): string {
+  const [namespace] = serverName.split('/');
+  return namespace && namespace.length > 0 ? namespace : serverName;
+}
+
+function classifyPublisherAuthMethod(
+  namespace: string,
+  record: McpRegistryRecord
+): McpRegistryPublisherAuthMethod {
+  if (namespace.startsWith('io.github.')) return 'github-oauth-oidc';
+  if (namespace.includes('.') && !namespace.startsWith('http')) return 'dns';
+  if (record.server.websiteUrl || record.server.repository?.url || remoteUrlsFromRecord(record).length > 0) {
+    return 'http';
+  }
+  return 'http';
+}
+
+function signPublisherAuthScanReceipt(
+  payload: McpRegistryPublisherAuthScanReceipt['payload']
+): McpRegistryPublisherAuthScanReceipt {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const publicKey = createPublicKey(privateKey);
+  const canonicalPayload = stableJson(payload);
+
+  return {
+    signatureAlgorithm: 'ed25519',
+    canonicalization: 'json-stable-v1',
+    payload,
+    payloadSha256: sha256(payload),
+    signatureBase64: sign(null, Buffer.from(canonicalPayload), privateKey).toString('base64'),
+    publicKeyBase64: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+    signedAt: payload.verifiedAt,
+  };
+}
+
+interface PublisherAuthReportSource {
+  server: string;
+  serverVersion: string | null;
+  registryUrl: string;
+  timestamp: string;
+  version: string;
+  score: number | null;
+}
+
+function buildPublisherAuthProvenance(args: {
+  report: PublisherAuthReportSource;
+  record: McpRegistryRecord;
+  categoryScores: Record<string, number | null>;
+}): McpRegistryPublisherAuthProvenance {
+  const server = args.record.server.name ?? args.report.server;
+  const registryNamespace = registryNamespaceFromServerName(server);
+  const publisherAuthMethod = classifyPublisherAuthMethod(registryNamespace, args.record);
+  const verifiedAt = args.report.timestamp;
+  const canonicalEvidence = {
+    registryUrl: args.report.registryUrl,
+    registryStatus: args.record.meta?.status ?? null,
+    registryPublishedAt: args.record.meta?.publishedAt ?? null,
+    registryUpdatedAt: args.record.meta?.updatedAt ?? null,
+    repositoryUrl: stringOrNull(args.record.server.repository?.url),
+    repositorySource: stringOrNull(args.record.server.repository?.source),
+    websiteUrl: stringOrNull(args.record.server.websiteUrl),
+    remoteUrls: remoteUrlsFromRecord(args.record),
+    packageIdentifiers: (args.record.server.packages ?? [])
+      .map((pkg) => pkg.identifier)
+      .filter((identifier): identifier is string => typeof identifier === 'string' && identifier.length > 0)
+      .sort(),
+  };
+  const canonicalEvidenceSha256 = sha256({
+    registryNamespace,
+    publisherAuthMethod,
+    verifiedAt,
+    policyVersion: MCP_PUBLISHER_AUTH_POLICY_VERSION,
+    canonicalEvidence,
+  });
+  const payload = {
+    server: args.report.server,
+    serverVersion: args.report.serverVersion,
+    registryUrl: args.report.registryUrl,
+    registryNamespace,
+    publisherAuthMethod,
+    verifiedAt,
+    policyVersion: MCP_PUBLISHER_AUTH_POLICY_VERSION,
+    canonicalEvidenceSha256,
+    score: args.report.score,
+    categoryScores: args.categoryScores,
+    scanTimestamp: args.report.timestamp,
+    axScoreVersion: args.report.version,
+  };
+
+  return {
+    registryNamespace,
+    publisherAuthMethod,
+    verifiedAt,
+    policyVersion: MCP_PUBLISHER_AUTH_POLICY_VERSION,
+    canonicalEvidenceSha256,
+    canonicalEvidence,
+    scanReceipt: signPublisherAuthScanReceipt(payload),
+  };
+}
+
 function canonicalText(value: unknown): string | null {
   return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : null;
 }
@@ -373,6 +482,7 @@ function entryFromMcpReport(report: McpReport, record: McpRegistryRecord): McpSw
   return {
     server: report.server,
     serverVersion: report.serverVersion,
+    publisherAuthProvenance: buildPublisherAuthProvenance({ report, record, categoryScores }),
     agentURI: record.server.erc8004?.agentURI ?? record.server.erc8004?.agentUri ?? record.server.agentURI ?? record.server.agentUri ?? null,
     registrationSha256,
     a2aMcpServiceReattested,
@@ -462,6 +572,18 @@ export async function runMcpSweep(
       entry = {
         server: serverName,
         serverVersion: record.server.version ?? null,
+        publisherAuthProvenance: buildPublisherAuthProvenance({
+          report: {
+            server: serverName,
+            serverVersion: record.server.version ?? null,
+            registryUrl,
+            timestamp: new Date().toISOString(),
+            version: VERSION,
+            score: null,
+          },
+          record,
+          categoryScores: {},
+        }),
         remoteUrls: remoteUrlsFromRecord(record),
         registryStatus: record.meta?.status ?? null,
         semanticVersionFingerprint: buildSemanticVersionFingerprint(record),

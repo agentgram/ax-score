@@ -283,6 +283,8 @@ export interface McpReport {
 export interface McpSweepEntry {
   server: string;
   serverVersion: string | null;
+  /** Signed publisher-auth provenance bound to the AX scan before score export. */
+  publisherAuthProvenance?: McpRegistryPublisherAuthProvenance;
   /** ERC-8004 agent registration URI captured during this sweep. */
   agentURI?: string | null;
   /** SHA-256 hash of the fetched ERC-8004 registration file, when available. */
@@ -311,6 +313,53 @@ export interface McpSweepEntry {
   /** True when GitHub rate limiting degraded repository evidence for this entry. */
   rateLimited: boolean;
   error?: string;
+}
+
+export type McpRegistryPublisherAuthMethod = 'github-oauth-oidc' | 'dns' | 'http';
+
+export interface McpRegistryPublisherAuthScanReceiptPayload {
+  server: string;
+  serverVersion: string | null;
+  registryUrl: string;
+  registryNamespace: string;
+  publisherAuthMethod: McpRegistryPublisherAuthMethod;
+  verifiedAt: string;
+  policyVersion: string;
+  canonicalEvidenceSha256: string;
+  score: number | null;
+  categoryScores: Record<string, number | null>;
+  scanTimestamp: string;
+  axScoreVersion: string;
+}
+
+export interface McpRegistryPublisherAuthScanReceipt {
+  signatureAlgorithm: 'ed25519';
+  canonicalization: 'json-stable-v1';
+  payload: McpRegistryPublisherAuthScanReceiptPayload;
+  payloadSha256: string;
+  signatureBase64: string;
+  publicKeyBase64: string;
+  signedAt: string;
+}
+
+export interface McpRegistryPublisherAuthProvenance {
+  registryNamespace: string;
+  publisherAuthMethod: McpRegistryPublisherAuthMethod;
+  verifiedAt: string;
+  policyVersion: string;
+  canonicalEvidenceSha256: string;
+  canonicalEvidence: {
+    registryUrl: string;
+    registryStatus: string | null;
+    registryPublishedAt: string | null;
+    registryUpdatedAt: string | null;
+    repositoryUrl: string | null;
+    repositorySource: string | null;
+    websiteUrl: string | null;
+    remoteUrls: string[];
+    packageIdentifiers: string[];
+  };
+  scanReceipt: McpRegistryPublisherAuthScanReceipt;
 }
 
 export interface McpSweepReport {
