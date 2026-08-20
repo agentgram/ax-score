@@ -33,6 +33,11 @@ export type {
   AgentRegistrationService,
   Erc8004AgentIdentityRef,
   AgentServiceBindingEvidence,
+  X402PaidReportDeliveryAccessOutcome,
+  X402PaidReportDeliveryEvidenceExport,
+  X402PaidReportDeliveryReceipt,
+  X402PaidReportDeliveryReceiptInput,
+  X402PaidReportOffer,
 } from './types.js';
 
 // Base classes (for extensibility)
@@ -78,7 +83,11 @@ export {
 
 // Reporters
 export { renderMcpReport, renderMcpLeaderboard } from './reporter/mcp.js';
-export { writeMcpReportFiles } from './reporter/mcp-files.js';
+export {
+  buildX402PaidReportDeliveryEvidence,
+  buildX402PaidReportDeliveryReceipt,
+  writeMcpReportFiles,
+} from './reporter/mcp-files.js';
 export type { McpReportFilePaths } from './reporter/mcp-files.js';
 
 // Upload

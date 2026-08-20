@@ -423,6 +423,63 @@ export interface Erc8004AgentUriLineageEvidence {
   transition: 'agent-uri-changed' | 'registration-hash-changed';
 }
 
+export interface X402PaidReportOffer {
+  resource: string;
+  amount: string;
+  currency: string;
+  network?: string;
+  payTo?: string;
+  facilitator?: string;
+  expiresAt?: string;
+  [key: string]: unknown;
+}
+
+export interface X402PaidReportDeliveryAccessOutcome {
+  status: 'delivered' | 'blocked' | 'failed';
+  httpStatus: number | null;
+  accessedAt?: string;
+  contentSha256?: string | null;
+  error?: string;
+}
+
+export interface X402PaidReportDeliveryReceiptInput {
+  reportId: string;
+  buyer?: string | null;
+  seller?: string | null;
+  offer: X402PaidReportOffer;
+  settlementReceipt: unknown;
+  deliveryUrl: string;
+  accessOutcome: X402PaidReportDeliveryAccessOutcome;
+  observedAt?: string;
+}
+
+export interface X402PaidReportDeliveryReceipt {
+  canonicalization: 'json-stable-v1';
+  reportId: string;
+  buyer: string | null;
+  seller: string | null;
+  offer: X402PaidReportOffer;
+  offerSha256: string;
+  settlementReceipt: unknown;
+  settlementReceiptSha256: string;
+  deliveryUrl: string;
+  accessOutcome: X402PaidReportDeliveryAccessOutcome;
+  observedAt: string;
+  receiptSha256: string;
+}
+
+export interface X402PaidReportDeliveryEvidenceExport {
+  generatedAt: string;
+  summary: {
+    totalPurchases: number;
+    delivered: number;
+    blocked: number;
+    failed: number;
+    deliveryRate: number;
+  };
+  receipts: X402PaidReportDeliveryReceipt[];
+}
+
 export interface McpEndpointDeprecationSnapshot {
   timestamp: string;
   version: string | null;
@@ -482,4 +539,5 @@ export interface McpReportArtifactManifest {
   };
   hostedUrls?: McpReportPublishedUrls;
   diff?: McpSweepDiff;
+  x402PaidDeliveryEvidence?: X402PaidReportDeliveryEvidenceExport;
 }

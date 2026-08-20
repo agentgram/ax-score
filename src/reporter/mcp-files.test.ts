@@ -2,8 +2,17 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { diffMcpSweepReports, writeMcpReportFiles } from './mcp-files.js';
-import type { McpReportArtifactManifest, McpSweepReport } from '../types.js';
+import {
+  buildX402PaidReportDeliveryEvidence,
+  buildX402PaidReportDeliveryReceipt,
+  diffMcpSweepReports,
+  writeMcpReportFiles,
+} from './mcp-files.js';
+import type {
+  McpReportArtifactManifest,
+  McpSweepReport,
+  X402PaidReportDeliveryEvidenceExport,
+} from '../types.js';
 
 function makeReport(): McpSweepReport {
   return {
@@ -117,6 +126,118 @@ describe('writeMcpReportFiles', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('exports partner evidence that binds x402 purchase receipts to durable report delivery outcomes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ax-score-mcp-report-'));
+
+    try {
+      const receipt = buildX402PaidReportDeliveryReceipt({
+        reportId: 'mcp-report-2026-08-20',
+        buyer: '0xbuyer',
+        seller: '0xseller',
+        offer: {
+          resource: 'https://ax-score.example/reports/mcp-report.json',
+          amount: '0.25',
+          currency: 'USDC',
+          network: 'base',
+        },
+        settlementReceipt: {
+          transactionHash: '0xsettlement',
+          facilitator: 'https://facilitator.example',
+          settledAt: '2026-08-20T00:00:00.000Z',
+        },
+        deliveryUrl: 'https://ax-score.example/reports/mcp-report.json',
+        accessOutcome: {
+          status: 'delivered',
+          httpStatus: 200,
+          accessedAt: '2026-08-20T00:00:05.000Z',
+          contentSha256: 'a'.repeat(64),
+        },
+        observedAt: '2026-08-20T00:00:06.000Z',
+      });
+
+      const paths = writeMcpReportFiles(
+        makeReport(),
+        {
+          json: join(dir, 'reports', 'mcp-report.json'),
+          markdown: join(dir, 'reports', 'mcp-report.md'),
+          manifest: join(dir, 'reports', 'mcp-report-manifest.json'),
+        },
+        {
+          x402PaidDeliveryReceipts: [receipt],
+        }
+      );
+
+      const manifest = JSON.parse(
+        readFileSync(paths.manifest!, 'utf8')
+      ) as McpReportArtifactManifest;
+      const evidence = manifest.x402PaidDeliveryEvidence as X402PaidReportDeliveryEvidenceExport;
+
+      expect(receipt.offerSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(receipt.settlementReceiptSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(receipt.receiptSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(receipt.deliveryUrl).toBe('https://ax-score.example/reports/mcp-report.json');
+      expect(evidence.summary).toEqual({
+        totalPurchases: 1,
+        delivered: 1,
+        blocked: 0,
+        failed: 0,
+        deliveryRate: 1,
+      });
+      expect(evidence.receipts[0]).toMatchObject({
+        reportId: 'mcp-report-2026-08-20',
+        buyer: '0xbuyer',
+        settlementReceiptSha256: receipt.settlementReceiptSha256,
+        accessOutcome: { status: 'delivered', httpStatus: 200 },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('buildX402PaidReportDeliveryEvidence', () => {
+  it('aggregates delivered, blocked, and failed access outcomes for external partners', () => {
+    const receipts = [
+      buildX402PaidReportDeliveryReceipt({
+        reportId: 'delivered-report',
+        offer: { resource: 'https://ax.example/delivered.json', amount: '1', currency: 'USDC' },
+        settlementReceipt: { transactionHash: '0x1' },
+        deliveryUrl: 'https://ax.example/delivered.json',
+        accessOutcome: { status: 'delivered', httpStatus: 200, accessedAt: '2026-08-20T00:00:00.000Z' },
+      }),
+      buildX402PaidReportDeliveryReceipt({
+        reportId: 'blocked-report',
+        offer: { resource: 'https://ax.example/blocked.json', amount: '1', currency: 'USDC' },
+        settlementReceipt: { transactionHash: '0x2' },
+        deliveryUrl: 'https://ax.example/blocked.json',
+        accessOutcome: { status: 'blocked', httpStatus: 403, error: 'signature required' },
+      }),
+      buildX402PaidReportDeliveryReceipt({
+        reportId: 'failed-report',
+        offer: { resource: 'https://ax.example/failed.json', amount: '1', currency: 'USDC' },
+        settlementReceipt: { transactionHash: '0x3' },
+        deliveryUrl: 'https://ax.example/failed.json',
+        accessOutcome: { status: 'failed', httpStatus: 500, error: 'origin unavailable' },
+      }),
+    ];
+
+    const evidence = buildX402PaidReportDeliveryEvidence(receipts, '2026-08-20T00:00:10.000Z');
+
+    expect(evidence.generatedAt).toBe('2026-08-20T00:00:10.000Z');
+    expect(evidence.summary).toEqual({
+      totalPurchases: 3,
+      delivered: 1,
+      blocked: 1,
+      failed: 1,
+      deliveryRate: 1 / 3,
+    });
+    expect(evidence.receipts.map((receipt) => receipt.reportId)).toEqual([
+      'blocked-report',
+      'delivered-report',
+      'failed-report',
+    ]);
   });
 });
 

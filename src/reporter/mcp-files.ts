@@ -9,6 +9,9 @@ import type {
   McpSweepDiff,
   McpSweepEntry,
   McpSweepReport,
+  X402PaidReportDeliveryEvidenceExport,
+  X402PaidReportDeliveryReceipt,
+  X402PaidReportDeliveryReceiptInput,
 } from '../types.js';
 import { renderJSON } from './json.js';
 import { renderMcpLeaderboard } from './mcp.js';
@@ -22,6 +25,7 @@ export interface McpReportFilePaths {
 export interface McpReportFileOptions {
   previousReport?: McpSweepReport;
   publishedBaseUrl?: string;
+  x402PaidDeliveryReceipts?: X402PaidReportDeliveryReceipt[];
 }
 
 function writeTextFile(path: string, content: string): void {
@@ -62,6 +66,55 @@ function stableJson(value: unknown): string {
 
 function sha256(value: unknown): string {
   return createHash('sha256').update(stableJson(value)).digest('hex');
+}
+
+export function buildX402PaidReportDeliveryReceipt(
+  input: X402PaidReportDeliveryReceiptInput
+): X402PaidReportDeliveryReceipt {
+  const observedAt = input.observedAt ?? new Date().toISOString();
+  const receiptWithoutHash = {
+    canonicalization: 'json-stable-v1' as const,
+    reportId: input.reportId,
+    buyer: input.buyer ?? null,
+    seller: input.seller ?? null,
+    offer: input.offer,
+    offerSha256: sha256(input.offer),
+    settlementReceipt: input.settlementReceipt,
+    settlementReceiptSha256: sha256(input.settlementReceipt),
+    deliveryUrl: input.deliveryUrl,
+    accessOutcome: input.accessOutcome,
+    observedAt,
+  };
+
+  return {
+    ...receiptWithoutHash,
+    receiptSha256: sha256(receiptWithoutHash),
+  };
+}
+
+export function buildX402PaidReportDeliveryEvidence(
+  receipts: X402PaidReportDeliveryReceipt[],
+  generatedAt = new Date().toISOString()
+): X402PaidReportDeliveryEvidenceExport {
+  const sortedReceipts = [...receipts].sort((a, b) =>
+    a.reportId.localeCompare(b.reportId) || a.deliveryUrl.localeCompare(b.deliveryUrl)
+  );
+  const delivered = sortedReceipts.filter((receipt) => receipt.accessOutcome.status === 'delivered').length;
+  const blocked = sortedReceipts.filter((receipt) => receipt.accessOutcome.status === 'blocked').length;
+  const failed = sortedReceipts.filter((receipt) => receipt.accessOutcome.status === 'failed').length;
+  const totalPurchases = sortedReceipts.length;
+
+  return {
+    generatedAt,
+    summary: {
+      totalPurchases,
+      delivered,
+      blocked,
+      failed,
+      deliveryRate: totalPurchases === 0 ? 0 : delivered / totalPurchases,
+    },
+    receipts: sortedReceipts,
+  };
 }
 
 function signSemanticVersionReceipt(
@@ -241,6 +294,9 @@ export function writeMcpReportFiles(
       },
       ...(hostedUrls ? { hostedUrls } : {}),
       ...(diff ? { diff } : {}),
+      ...(options.x402PaidDeliveryReceipts && options.x402PaidDeliveryReceipts.length > 0
+        ? { x402PaidDeliveryEvidence: buildX402PaidReportDeliveryEvidence(options.x402PaidDeliveryReceipts) }
+        : {}),
     };
     writeTextFile(paths.manifest, renderJSON(manifest));
   }
