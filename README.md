@@ -211,6 +211,8 @@ Remote reachability and TLS audit details also include DNS resolution policy, re
 
 When `mcp-report` compares a current report with `--diff-from`, the manifest also includes an `agentUriLineage` diff array for servers whose `agentURI` or registration hash changed. Each lineage record carries the previous/current registration evidence, the transition type (`agent-uri-changed` or `registration-hash-changed`), and `reputationWeightRetained`, which is true only after the current A2A/MCP service bindings were re-attested.
 
+For ERC-8004 Ed25519 key rotations, diff output also records identity continuity decisions. The current registration can export `keyContinuityReceipts`, `continuityReceipts`, or `keyRotationReceipts`; AX Score verifies signed `old-to-new-continuity` or `explicit-revocation` receipts before retaining reputation across a key change. Missing or invalid continuity evidence is reported as `missing-continuity` so downstream reputation consumers can quarantine the transition instead of silently carrying trust forward.
+
 ### Known limitations (v1)
 
 - **Text heuristics are gameable.** Description quality, README size, and usage-instruction detection are length- and keyword-based; a publisher can satisfy them with boilerplate. Treat high Metadata/Documentation scores as necessary-but-not-sufficient signals. Planned v2 corroboration: cross-checking the README against the declared tool surface, verifying config snippets actually reference the published package, and sampling tool descriptions via a live MCP handshake.
