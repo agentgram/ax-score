@@ -1,8 +1,10 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { createHash, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
+import { createHash, createPublicKey, generateKeyPairSync, sign, verify } from 'node:crypto';
 import { basename, dirname } from 'node:path';
 import type {
   Erc8004AgentUriLineageEvidence,
+  Erc8004IdentityContinuityEvidence,
+  Erc8004KeyContinuityReceipt,
   McpReportArtifactManifest,
   McpReportPublishedUrls,
   McpSemanticVersionReceipt,
@@ -127,6 +129,116 @@ function detectSemanticVersionReceipts(
     .sort((a, b) => a.server.localeCompare(b.server));
 }
 
+function activeEd25519Keys(entry: McpSweepEntry): Array<{ version?: number | null; publicKeyBase64: string }> {
+  return (entry.erc8004Identity?.ed25519PublicKeys ?? [])
+    .filter((key) => key.revoked !== true)
+    .filter((key) => typeof key.publicKeyBase64 === 'string' && key.publicKeyBase64.length > 0)
+    .sort((a, b) => (a.version ?? 0) - (b.version ?? 0));
+}
+
+function sameAgentBinding(previousEntry: McpSweepEntry, currentEntry: McpSweepEntry): boolean {
+  const previous = previousEntry.erc8004Identity;
+  const current = currentEntry.erc8004Identity;
+  if (!previous || !current) return true;
+  return (
+    previous.agentId === current.agentId &&
+    previous.owner === current.owner &&
+    previous.identityRegistry === current.identityRegistry &&
+    previous.chainId === current.chainId
+  );
+}
+
+function verifyContinuityReceipt(args: {
+  receipt: Erc8004KeyContinuityReceipt;
+  previousEntry: McpSweepEntry;
+  currentEntry: McpSweepEntry;
+  previousKeyBase64: string;
+  currentKeyBase64: string;
+}): boolean {
+  if (args.receipt.signatureAlgorithm !== 'ed25519') return false;
+  if (args.receipt.canonicalization !== 'json-stable-v1') return false;
+  if (args.receipt.kind !== 'old-to-new-continuity' && args.receipt.kind !== 'explicit-revocation') return false;
+  if (args.receipt.payloadSha256 !== sha256(args.receipt.payload)) return false;
+
+  const previousIdentity = args.previousEntry.erc8004Identity;
+  const currentIdentity = args.currentEntry.erc8004Identity;
+  if (!previousIdentity || !currentIdentity) return false;
+  const previousKey = activeEd25519Keys(args.previousEntry).find(
+    (key) => key.publicKeyBase64 === args.previousKeyBase64
+  );
+  const currentKey = activeEd25519Keys(args.currentEntry).find(
+    (key) => key.publicKeyBase64 === args.currentKeyBase64
+  );
+  if (!previousKey || !currentKey) return false;
+  if (args.receipt.payload.previous.agentId !== previousIdentity.agentId) return false;
+  if (args.receipt.payload.previous.owner !== previousIdentity.owner) return false;
+  if (args.receipt.payload.previous.publicKeyBase64 !== args.previousKeyBase64) return false;
+  if (args.receipt.payload.previous.version !== (previousKey.version ?? null)) return false;
+  if (args.receipt.payload.current.agentId !== currentIdentity.agentId) return false;
+  if (args.receipt.payload.current.owner !== currentIdentity.owner) return false;
+  if (args.receipt.payload.current.publicKeyBase64 !== args.currentKeyBase64) return false;
+  if (args.receipt.payload.current.version !== (currentKey.version ?? null)) return false;
+
+  try {
+    const publicKey = createPublicKey({
+      key: Buffer.from(args.previousKeyBase64, 'base64'),
+      type: 'spki',
+      format: 'der',
+    });
+    return verify(
+      null,
+      Buffer.from(stableJson(args.receipt.payload)),
+      publicKey,
+      Buffer.from(args.receipt.signatureBase64, 'base64')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function evaluateIdentityContinuity(
+  previousEntry: McpSweepEntry,
+  currentEntry: McpSweepEntry
+): Erc8004IdentityContinuityEvidence | undefined {
+  const previousKeys = activeEd25519Keys(previousEntry);
+  const currentKeys = activeEd25519Keys(currentEntry);
+  if (previousKeys.length === 0 && currentKeys.length === 0) return undefined;
+  const previousKey = previousKeys.at(-1)?.publicKeyBase64 ?? null;
+  const currentKey = currentKeys.at(-1)?.publicKeyBase64 ?? null;
+  const ed25519KeyChanged = previousKey !== currentKey;
+  const agentBindingChanged = !sameAgentBinding(previousEntry, currentEntry);
+
+  if (!ed25519KeyChanged) {
+    return { agentBindingChanged, ed25519KeyChanged, continuityVerified: true, decision: 'unchanged' };
+  }
+  if (!previousKey || !currentKey || agentBindingChanged) {
+    return {
+      agentBindingChanged,
+      ed25519KeyChanged,
+      continuityVerified: false,
+      decision: 'missing-continuity',
+    };
+  }
+
+  const receipt = (currentEntry.erc8004KeyContinuityReceipts ?? []).find((candidate) =>
+    verifyContinuityReceipt({
+      receipt: candidate,
+      previousEntry,
+      currentEntry,
+      previousKeyBase64: previousKey,
+      currentKeyBase64: currentKey,
+    })
+  );
+
+  return {
+    agentBindingChanged,
+    ed25519KeyChanged,
+    continuityVerified: Boolean(receipt),
+    decision: receipt?.kind === 'explicit-revocation' ? 'explicit-revocation' : receipt ? 'signed-continuity' : 'missing-continuity',
+    ...(receipt ? { receipt } : {}),
+  };
+}
+
 function detectAgentUriLineage(
   currentByServer: Map<string, McpSweepEntry>,
   previousByServer: Map<string, McpSweepEntry>
@@ -144,6 +256,9 @@ function detectAgentUriLineage(
       const hashChanged = previousRegistrationSha256 !== currentRegistrationSha256;
       if (!uriChanged && !hashChanged) return [];
       const servicesReattested = currentEntry.a2aMcpServiceReattested === true;
+      const identityContinuity = evaluateIdentityContinuity(previousEntry, currentEntry);
+      const identityAllowsRetention =
+        !identityContinuity || !identityContinuity.ed25519KeyChanged || identityContinuity.continuityVerified;
       const transition: Erc8004AgentUriLineageEvidence['transition'] = uriChanged
         ? 'agent-uri-changed'
         : 'registration-hash-changed';
@@ -154,7 +269,10 @@ function detectAgentUriLineage(
         previousRegistrationSha256,
         currentRegistrationSha256,
         servicesReattested,
-        reputationWeightRetained: servicesReattested,
+        reputationWeightRetained: servicesReattested && identityAllowsRetention,
+        ...(previousEntry.erc8004Identity ? { previousIdentity: previousEntry.erc8004Identity } : {}),
+        ...(currentEntry.erc8004Identity ? { currentIdentity: currentEntry.erc8004Identity } : {}),
+        ...(identityContinuity ? { identityContinuity } : {}),
         transition,
       }];
     })

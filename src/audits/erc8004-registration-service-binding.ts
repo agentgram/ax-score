@@ -25,6 +25,10 @@ export class Erc8004RegistrationBindingAudit extends McpBaseAudit {
       kind: 'erc8004-service-binding',
       service: binding.serviceName,
       endpoint: binding.endpoint,
+      agentId: binding.agentId,
+      owner: binding.owner,
+      identityRegistry: binding.identityRegistry,
+      ed25519PublicKeys: binding.ed25519PublicKeys,
       tls: binding.tls,
       domainControl: binding.domainControl,
       redirects: binding.redirectCount,
@@ -44,12 +48,17 @@ export class Erc8004RegistrationBindingAudit extends McpBaseAudit {
       allResponseHashesVerified: lineage.allResponseHashesVerified,
       responses: lineage.responses,
     }));
+    const identityItems = registration.identity ? [{
+      kind: 'erc8004-identity',
+      identity: registration.identity,
+      keyContinuityReceipts: registration.keyContinuityReceipts,
+    }] : [];
     const verified = bindings.filter((binding) => binding.tls && binding.signatureAlgorithm === 'ed25519' && (binding.domainControl === 'same-host' || binding.domainControl === 'same-registrable-domain'));
     const verifiedLineage = validationLineage.filter((lineage) => lineage.allResponsesBound && lineage.allResponseHashesVerified);
     const evaluableGroups = (bindings.length > 0 ? 1 : 0) + (validationLineage.length > 0 ? 1 : 0);
     const score = ((bindings.length > 0 ? verified.length / bindings.length : 0) + (validationLineage.length > 0 ? verifiedLineage.length / validationLineage.length : 0)) / evaluableGroups;
     const summary = `${verified.length}/${bindings.length} ERC-8004 A2A/MCP service bindings carry TLS, domain-control, redirect, and Ed25519 evidence. ${verifiedLineage.length}/${validationLineage.length} validation request lineage receipts bind every response to requestHash/original validator, verify responseURI content against responseHash, and export response order, tags, and latest state.`;
-    const allItems = [...items, ...validationLineageItems];
+    const allItems = [...items, ...validationLineageItems, ...identityItems];
     if (score >= 1) return this.pass({ type: 'table', items: allItems, summary });
     if (score <= 0) return this.fail({ type: 'table', items: allItems, summary });
     return this.partial(score, { type: 'table', items: allItems, summary });

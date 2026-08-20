@@ -14,6 +14,8 @@ function makeRegistrationArtifact(
     error: null,
     registration: { services: [{ name: 'MCP', endpoint: 'https://mcp.acme.dev/mcp' }] },
     registrationSha256: overrides.registrationSha256 ?? null,
+    identity: overrides.identity ?? null,
+    keyContinuityReceipts: overrides.keyContinuityReceipts ?? [],
     bindings: buildAgentServiceBindings({
       agentURI: 'https://agent.acme.dev/agent.json',
       registrationSha256: overrides.registrationSha256 ?? undefined,

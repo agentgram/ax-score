@@ -205,15 +205,67 @@ export interface Erc8004AgentIdentityRef {
   agentURI?: string;
   agentUri?: string;
   agentId?: string | number;
+  owner?: string;
+  ownerAddress?: string;
   identityRegistry?: string;
   chainId?: string | number;
+}
+
+export interface Erc8004VersionedEd25519PublicKey {
+  version: number | null;
+  publicKeyBase64: string;
+  keyId?: string | null;
+  revoked?: boolean;
+}
+
+export interface Erc8004AgentIdentityEvidence {
+  agentId: string | null;
+  owner: string | null;
+  identityRegistry: string | null;
+  chainId: string | null;
+  ed25519PublicKeys: Erc8004VersionedEd25519PublicKey[];
+}
+
+export interface Erc8004KeyContinuityReceiptPayload {
+  previous: {
+    agentId: string | null;
+    owner: string | null;
+    publicKeyBase64: string;
+    version: number | null;
+  };
+  current: {
+    agentId: string | null;
+    owner: string | null;
+    publicKeyBase64: string;
+    version: number | null;
+  };
+}
+
+export interface Erc8004KeyContinuityReceipt {
+  signatureAlgorithm: 'ed25519';
+  canonicalization: 'json-stable-v1';
+  kind: 'old-to-new-continuity' | 'explicit-revocation';
+  payload: Erc8004KeyContinuityReceiptPayload;
+  payloadSha256: string;
+  signatureBase64: string;
+  signedAt: string;
+}
+
+export interface Erc8004IdentityContinuityEvidence {
+  agentBindingChanged: boolean;
+  ed25519KeyChanged: boolean;
+  continuityVerified: boolean;
+  decision: 'unchanged' | 'signed-continuity' | 'explicit-revocation' | 'missing-continuity';
+  receipt?: Erc8004KeyContinuityReceipt;
 }
 
 export interface AgentServiceBindingEvidence {
   agentURI: string;
   registrationSha256?: string;
   agentId: string | null;
+  owner: string | null;
   identityRegistry: string | null;
+  ed25519PublicKeys: Erc8004VersionedEd25519PublicKey[];
   serviceName: string;
   endpoint: string;
   endpointHost: string;
@@ -289,6 +341,10 @@ export interface McpSweepEntry {
   agentURI?: string | null;
   /** SHA-256 hash of the fetched ERC-8004 registration file, when available. */
   registrationSha256?: string | null;
+  /** ERC-8004 agentId/owner plus versioned Ed25519 public keys captured from the registration file. */
+  erc8004Identity?: Erc8004AgentIdentityEvidence;
+  /** Signed old-to-new key continuity or explicit revocation receipts exported by the current registration. */
+  erc8004KeyContinuityReceipts?: Erc8004KeyContinuityReceipt[];
   /** True only when declared A2A/MCP services were re-attested after dereferencing. */
   a2aMcpServiceReattested?: boolean;
   /** ERC-8004 validation responses grouped by requestHash/original validator. */
@@ -420,6 +476,9 @@ export interface Erc8004AgentUriLineageEvidence {
   currentRegistrationSha256: string | null;
   servicesReattested: boolean;
   reputationWeightRetained: boolean;
+  previousIdentity?: Erc8004AgentIdentityEvidence;
+  currentIdentity?: Erc8004AgentIdentityEvidence;
+  identityContinuity?: Erc8004IdentityContinuityEvidence;
   transition: 'agent-uri-changed' | 'registration-hash-changed';
 }
 
