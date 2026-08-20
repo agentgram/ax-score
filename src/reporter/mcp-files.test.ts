@@ -1,9 +1,50 @@
+import { createHash, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { diffMcpSweepReports, writeMcpReportFiles } from './mcp-files.js';
+import {
+  diffMcpSweepReports,
+  writeMcpReportFiles,
+} from './mcp-files.js';
 import type { McpReportArtifactManifest, McpSweepReport } from '../types.js';
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(',')}}`;
+}
+
+function makeContinuityFixture() {
+  const previous = generateKeyPairSync('ed25519');
+  const current = generateKeyPairSync('ed25519');
+  const previousPublicKeyBase64 = createPublicKey(previous.privateKey)
+    .export({ type: 'spki', format: 'der' })
+    .toString('base64');
+  const currentPublicKeyBase64 = createPublicKey(current.privateKey)
+    .export({ type: 'spki', format: 'der' })
+    .toString('base64');
+  const payload = {
+    previous: { agentId: '7', owner: '0xowner', publicKeyBase64: previousPublicKeyBase64, version: 1 },
+    current: { agentId: '7', owner: '0xowner', publicKeyBase64: currentPublicKeyBase64, version: 2 },
+  };
+  return {
+    previousPublicKeyBase64,
+    currentPublicKeyBase64,
+    receipt: {
+      signatureAlgorithm: 'ed25519' as const,
+      canonicalization: 'json-stable-v1' as const,
+      kind: 'old-to-new-continuity' as const,
+      payload,
+      payloadSha256: createHash('sha256').update(stableJson(payload)).digest('hex'),
+      signatureBase64: sign(null, Buffer.from(stableJson(payload)), previous.privateKey).toString('base64'),
+      signedAt: '2026-08-14T00:00:00.000Z',
+    },
+  };
+}
 
 function makeReport(): McpSweepReport {
   return {
@@ -118,6 +159,7 @@ describe('writeMcpReportFiles', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
 });
 
 describe('diffMcpSweepReports', () => {
@@ -180,6 +222,182 @@ describe('diffMcpSweepReports', () => {
         transition: 'agent-uri-changed',
       },
     ]);
+  });
+
+  it('requires signed ERC-8004 old-to-new Ed25519 continuity before retaining reputation across key rotation', () => {
+    const baseEntry = makeReport().entries[0]!;
+    const continuity = makeContinuityFixture();
+    const previousIdentity = {
+      agentId: '7',
+      owner: '0xowner',
+      identityRegistry: '0xregistry',
+      chainId: '8453',
+      ed25519PublicKeys: [
+        { version: 1, publicKeyBase64: continuity.previousPublicKeyBase64, revoked: false },
+      ],
+    };
+    const currentIdentity = {
+      ...previousIdentity,
+      ed25519PublicKeys: [
+        { version: 2, publicKeyBase64: continuity.currentPublicKeyBase64, revoked: false },
+      ],
+    };
+    const previous: McpSweepReport = {
+      ...makeReport(),
+      timestamp: '2026-08-13T00:00:00.000Z',
+      entries: [
+        {
+          ...baseEntry,
+          score: 91,
+          agentURI: 'https://agent.acme.dev/agent.json',
+          registrationSha256: 'old-registration-hash',
+          a2aMcpServiceReattested: true,
+          erc8004Identity: previousIdentity,
+        },
+      ],
+    };
+    const current: McpSweepReport = {
+      ...makeReport(),
+      timestamp: '2026-08-14T00:00:00.000Z',
+      entries: [
+        {
+          ...baseEntry,
+          score: 96,
+          agentURI: 'https://agent.acme.dev/agent.json',
+          registrationSha256: 'new-registration-hash',
+          a2aMcpServiceReattested: true,
+          erc8004Identity: currentIdentity,
+          erc8004KeyContinuityReceipts: [continuity.receipt],
+        },
+      ],
+    };
+
+    const diff = diffMcpSweepReports(current, previous);
+
+    expect(diff.agentUriLineage[0]).toMatchObject({
+      servicesReattested: true,
+      identityContinuity: {
+        agentBindingChanged: false,
+        ed25519KeyChanged: true,
+        continuityVerified: true,
+        decision: 'signed-continuity',
+      },
+      reputationWeightRetained: true,
+    });
+  });
+
+  it('does not retain reputation when an ERC-8004 Ed25519 key changes without continuity or revocation evidence', () => {
+    const baseEntry = makeReport().entries[0]!;
+    const continuity = makeContinuityFixture();
+    const previous: McpSweepReport = {
+      ...makeReport(),
+      timestamp: '2026-08-13T00:00:00.000Z',
+      entries: [
+        {
+          ...baseEntry,
+          agentURI: 'https://agent.acme.dev/agent.json',
+          registrationSha256: 'old-registration-hash',
+          a2aMcpServiceReattested: true,
+          erc8004Identity: {
+            agentId: '7',
+            owner: '0xowner',
+            identityRegistry: '0xregistry',
+            chainId: '8453',
+            ed25519PublicKeys: [
+              { version: 1, publicKeyBase64: continuity.previousPublicKeyBase64, revoked: false },
+            ],
+          },
+        },
+      ],
+    };
+    const current: McpSweepReport = {
+      ...makeReport(),
+      timestamp: '2026-08-14T00:00:00.000Z',
+      entries: [
+        {
+          ...baseEntry,
+          agentURI: 'https://agent.acme.dev/agent.json',
+          registrationSha256: 'new-registration-hash',
+          a2aMcpServiceReattested: true,
+          erc8004Identity: {
+            agentId: '7',
+            owner: '0xowner',
+            identityRegistry: '0xregistry',
+            chainId: '8453',
+            ed25519PublicKeys: [
+              { version: 2, publicKeyBase64: continuity.currentPublicKeyBase64, revoked: false },
+            ],
+          },
+        },
+      ],
+    };
+
+    const diff = diffMcpSweepReports(current, previous);
+
+    expect(diff.agentUriLineage[0]).toMatchObject({
+      servicesReattested: true,
+      identityContinuity: {
+        ed25519KeyChanged: true,
+        continuityVerified: false,
+        decision: 'missing-continuity',
+      },
+      reputationWeightRetained: false,
+    });
+  });
+
+  it('allows explicit signed revocation receipts to retain continuity through an ERC-8004 Ed25519 key rotation', () => {
+    const baseEntry = makeReport().entries[0]!;
+    const continuity = makeContinuityFixture();
+    const previousIdentity = {
+      agentId: '7',
+      owner: '0xowner',
+      identityRegistry: '0xregistry',
+      chainId: '8453',
+      ed25519PublicKeys: [
+        { version: 1, publicKeyBase64: continuity.previousPublicKeyBase64, revoked: false },
+      ],
+    };
+    const currentIdentity = {
+      ...previousIdentity,
+      ed25519PublicKeys: [
+        { version: 2, publicKeyBase64: continuity.currentPublicKeyBase64, revoked: false },
+      ],
+    };
+    const previous: McpSweepReport = {
+      ...makeReport(),
+      entries: [
+        {
+          ...baseEntry,
+          agentURI: 'https://agent.acme.dev/agent.json',
+          registrationSha256: 'old-registration-hash',
+          a2aMcpServiceReattested: true,
+          erc8004Identity: previousIdentity,
+        },
+      ],
+    };
+    const current: McpSweepReport = {
+      ...makeReport(),
+      entries: [
+        {
+          ...baseEntry,
+          agentURI: 'https://agent.acme.dev/agent.json',
+          registrationSha256: 'new-registration-hash',
+          a2aMcpServiceReattested: true,
+          erc8004Identity: currentIdentity,
+          erc8004KeyContinuityReceipts: [{ ...continuity.receipt, kind: 'explicit-revocation' }],
+        },
+      ],
+    };
+
+    const diff = diffMcpSweepReports(current, previous);
+
+    expect(diff.agentUriLineage[0]).toMatchObject({
+      identityContinuity: {
+        continuityVerified: true,
+        decision: 'explicit-revocation',
+      },
+      reputationWeightRetained: true,
+    });
   });
 
   it('flags adjacent Registry version-only increments with a signed semantic receipt', () => {

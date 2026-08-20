@@ -11,6 +11,9 @@ import type {
   Erc8004FeedbackRedirectEvidence,
   Erc8004FeedbackResolutionEvidence,
   Erc8004AgentIdentityRef,
+  Erc8004AgentIdentityEvidence,
+  Erc8004KeyContinuityReceipt,
+  Erc8004VersionedEd25519PublicKey,
   Erc8004ValidationLineageEvidence,
   Erc8004ValidationResponseEvidence,
   McpConfig,
@@ -25,13 +28,20 @@ import { isPrivateHost } from './mcp-remote.js';
 const USER_AGENT = 'AX-Score/1.0 (erc8004-registration-binding)';
 const MAX_FEEDBACK_REDIRECTS = 5;
 
-export interface AgentRegistrationDocument { services?: AgentRegistrationService[]; validationRequests?: AgentValidationRequest[]; }
+export interface AgentRegistrationDocument {
+  services?: AgentRegistrationService[];
+  validationRequests?: AgentValidationRequest[];
+  identity?: Erc8004AgentIdentityEvidence;
+  keyContinuityReceipts?: Erc8004KeyContinuityReceipt[];
+}
 export interface Erc8004RegistrationGatherResult extends GatherResult {
   agentURI: string | null;
   fetched: boolean;
   error: string | null;
   registration: AgentRegistrationDocument | null;
   registrationSha256: string | null;
+  identity: Erc8004AgentIdentityEvidence | null;
+  keyContinuityReceipts: Erc8004KeyContinuityReceipt[];
   bindings: AgentServiceBindingEvidence[];
   validationLineage: Erc8004ValidationLineageEvidence[];
 }
@@ -63,6 +73,69 @@ function normalizeIdentityValue(value: string | number | undefined): string | nu
   if (typeof value === 'string' && value.length > 0) return value;
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   return null;
+}
+
+function normalizePublicKeyVersion(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
+  if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value);
+  return null;
+}
+
+function normalizeEd25519PublicKeys(document: unknown): Erc8004VersionedEd25519PublicKey[] {
+  if (!document || typeof document !== 'object') return [];
+  const record = document as Record<string, unknown>;
+  const identity = record['identity'];
+  const identityRecord = identity && typeof identity === 'object' ? identity as Record<string, unknown> : {};
+  const rawKeys = record['ed25519PublicKeys'] ?? record['publicKeys'] ?? identityRecord['ed25519PublicKeys'] ?? identityRecord['publicKeys'];
+  if (!Array.isArray(rawKeys)) return [];
+  return rawKeys
+    .filter((key): key is Record<string, unknown> => Boolean(key) && typeof key === 'object')
+    .flatMap((key) => {
+      const algorithm = typeof key['algorithm'] === 'string' ? key['algorithm'].toLowerCase() : 'ed25519';
+      if (algorithm !== 'ed25519') return [];
+      const publicKeyBase64 = normalizeString(key['publicKeyBase64'] ?? key['publicKey'] ?? key['publicKeyDerBase64']);
+      if (!publicKeyBase64) return [];
+      return [{
+        version: normalizePublicKeyVersion(key['version']),
+        publicKeyBase64,
+        keyId: normalizeString(key['keyId'] ?? key['id']) ?? null,
+        revoked: key['revoked'] === true,
+      }];
+    })
+    .sort((a, b) => (a.version ?? -1) - (b.version ?? -1) || a.publicKeyBase64.localeCompare(b.publicKeyBase64));
+}
+
+function normalizeAgentIdentity(document: unknown, server: McpServerRecord): Erc8004AgentIdentityEvidence {
+  const docRecord = document && typeof document === 'object' ? document as Record<string, unknown> : {};
+  const docIdentity = docRecord['identity'];
+  const identityRecord = docIdentity && typeof docIdentity === 'object' ? docIdentity as Record<string, unknown> : {};
+  const registryIdentity = identityRef(server);
+  return {
+    agentId: normalizeIdentityValue((identityRecord['agentId'] ?? docRecord['agentId'] ?? registryIdentity.agentId) as string | number | undefined),
+    owner: normalizeIdentityValue((identityRecord['owner'] ?? identityRecord['ownerAddress'] ?? docRecord['owner'] ?? docRecord['ownerAddress'] ?? registryIdentity.owner ?? registryIdentity.ownerAddress) as string | number | undefined),
+    identityRegistry: normalizeIdentityValue((identityRecord['identityRegistry'] ?? docRecord['identityRegistry'] ?? registryIdentity.identityRegistry) as string | number | undefined),
+    chainId: normalizeIdentityValue((identityRecord['chainId'] ?? docRecord['chainId'] ?? registryIdentity.chainId) as string | number | undefined),
+    ed25519PublicKeys: normalizeEd25519PublicKeys(document),
+  };
+}
+
+function keyContinuityReceipts(document: unknown): Erc8004KeyContinuityReceipt[] {
+  if (!document || typeof document !== 'object') return [];
+  const rawReceipts = (document as Record<string, unknown>)['keyContinuityReceipts'] ?? (document as Record<string, unknown>)['continuityReceipts'] ?? (document as Record<string, unknown>)['keyRotationReceipts'];
+  if (!Array.isArray(rawReceipts)) return [];
+  return rawReceipts
+    .filter((receipt): receipt is Record<string, unknown> => Boolean(receipt) && typeof receipt === 'object')
+    .flatMap((receipt) => {
+      const payload = receipt['payload'];
+      const kind = receipt['kind'];
+      const signatureAlgorithm = receipt['signatureAlgorithm'];
+      const canonicalization = receipt['canonicalization'];
+      const payloadSha256 = normalizeString(receipt['payloadSha256']);
+      const signatureBase64 = normalizeString(receipt['signatureBase64']);
+      const signedAt = normalizeString(receipt['signedAt']);
+      if (!payload || typeof payload !== 'object' || (kind !== 'old-to-new-continuity' && kind !== 'explicit-revocation') || signatureAlgorithm !== 'ed25519' || canonicalization !== 'json-stable-v1' || !payloadSha256 || !signatureBase64 || !signedAt) return [];
+      return [{ signatureAlgorithm, canonicalization, kind, payload: payload as Erc8004KeyContinuityReceipt['payload'], payloadSha256, signatureBase64, signedAt }];
+    });
 }
 
 function registrableDomain(hostname: string): string | null {
@@ -357,10 +430,17 @@ function remoteByEndpoint(remotes: RemoteProbe[]): Map<string, RemoteProbe> {
   return new Map(remotes.map((remote) => [remote.url, remote]));
 }
 
-export function buildAgentServiceBindings(args: { agentURI: string; registrationSha256?: string | null; server: McpServerRecord; services: AgentRegistrationService[]; remotes: RemoteProbe[]; }): AgentServiceBindingEvidence[] {
+export function buildAgentServiceBindings(args: { agentURI: string; registrationSha256?: string | null; server: McpServerRecord; services: AgentRegistrationService[]; remotes: RemoteProbe[]; identity?: Erc8004AgentIdentityEvidence | null; }): AgentServiceBindingEvidence[] {
   let agentUriHost: string | null = null;
   try { const parsedAgentUri = new URL(args.agentURI); agentUriHost = parsedAgentUri.protocol === 'https:' ? parsedAgentUri.hostname : null; } catch { agentUriHost = null; }
   const identity = identityRef(args.server);
+  const identityEvidence = args.identity ?? {
+    agentId: normalizeIdentityValue(identity.agentId),
+    owner: normalizeIdentityValue(identity.owner ?? identity.ownerAddress),
+    identityRegistry: normalizeIdentityValue(identity.identityRegistry),
+    chainId: normalizeIdentityValue(identity.chainId),
+    ed25519PublicKeys: [],
+  };
   const remotes = remoteByEndpoint(args.remotes);
   return args.services.filter((service) => isA2aOrMcpService(service) && typeof service.endpoint === 'string').flatMap((service) => {
     const endpoint = service.endpoint ?? '';
@@ -371,8 +451,10 @@ export function buildAgentServiceBindings(args: { agentURI: string; registration
     return [{
       agentURI: args.agentURI,
       ...(args.registrationSha256 ? { registrationSha256: args.registrationSha256 } : {}),
-      agentId: normalizeIdentityValue(identity.agentId),
-      identityRegistry: normalizeIdentityValue(identity.identityRegistry),
+      agentId: identityEvidence.agentId,
+      owner: identityEvidence.owner,
+      identityRegistry: identityEvidence.identityRegistry,
+      ed25519PublicKeys: identityEvidence.ed25519PublicKeys,
       serviceName: service.name ?? 'unknown',
       endpoint,
       endpointHost,
@@ -391,26 +473,30 @@ export class Erc8004RegistrationGatherer {
     const registry = artifacts['mcpRegistry'] as McpRegistryGatherResult | undefined;
     const remote = artifacts['mcpRemote'] as { remotes?: RemoteProbe[] } | undefined;
     const server = registry?.server;
-    if (!server) return { agentURI: null, fetched: false, error: 'Missing MCP registry server record.', registration: null, registrationSha256: null, bindings: [], validationLineage: [] };
+    if (!server) return { agentURI: null, fetched: false, error: 'Missing MCP registry server record.', registration: null, registrationSha256: null, identity: null, keyContinuityReceipts: [], bindings: [], validationLineage: [] };
     const agentURI = normalizeAgentURI(server);
-    if (!agentURI) return { agentURI: null, fetched: false, error: null, registration: null, registrationSha256: null, bindings: [], validationLineage: [] };
+    if (!agentURI) return { agentURI: null, fetched: false, error: null, registration: null, registrationSha256: null, identity: null, keyContinuityReceipts: [], bindings: [], validationLineage: [] };
     try {
       const timeout = config.timeout ?? DEFAULT_TIMEOUT;
       const document = await fetchRegistration(agentURI, timeout);
       const registrationSha256 = sha256Registration(document);
       const services = registrationServices(document);
       const validationRequestEvidence = validationRequests(document);
+      const identity = normalizeAgentIdentity(document, server);
+      const receipts = keyContinuityReceipts(document);
       return {
         agentURI,
         fetched: true,
         error: null,
-        registration: { services, validationRequests: validationRequestEvidence },
+        registration: { services, validationRequests: validationRequestEvidence, identity, keyContinuityReceipts: receipts },
         registrationSha256,
-        bindings: buildAgentServiceBindings({ agentURI, registrationSha256, server, services, remotes: remote?.remotes ?? [] }),
+        identity,
+        keyContinuityReceipts: receipts,
+        bindings: buildAgentServiceBindings({ agentURI, registrationSha256, server, services, remotes: remote?.remotes ?? [], identity }),
         validationLineage: await buildProgressiveValidationLineage({ validationRequests: validationRequestEvidence, timeout }),
       };
     } catch (err) {
-      return { agentURI, fetched: false, error: err instanceof Error ? err.message : 'Could not dereference agent registration file.', registration: null, registrationSha256: null, bindings: [], validationLineage: [] };
+      return { agentURI, fetched: false, error: err instanceof Error ? err.message : 'Could not dereference agent registration file.', registration: null, registrationSha256: null, identity: null, keyContinuityReceipts: [], bindings: [], validationLineage: [] };
     }
   }
 }

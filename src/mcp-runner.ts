@@ -1,6 +1,8 @@
 import type {
   AuditResult,
   AXCategory,
+  Erc8004AgentIdentityEvidence,
+  Erc8004KeyContinuityReceipt,
   Erc8004ValidationLineageEvidence,
   McpConfig,
   McpRegistryRecord,
@@ -479,12 +481,19 @@ function entryFromMcpReport(report: McpReport, record: McpRegistryRecord): McpSw
       typeof item.allResponseHashesVerified === 'boolean' &&
       Array.isArray(item.responses)
     );
+  const identityItem = erc8004Items.find((item) => item['kind'] === 'erc8004-identity');
+  const erc8004Identity = identityItem?.['identity'] as Erc8004AgentIdentityEvidence | undefined;
+  const erc8004KeyContinuityReceipts = Array.isArray(identityItem?.['keyContinuityReceipts'])
+    ? identityItem['keyContinuityReceipts'] as Erc8004KeyContinuityReceipt[]
+    : [];
   return {
     server: report.server,
     serverVersion: report.serverVersion,
     publisherAuthProvenance: buildPublisherAuthProvenance({ report, record, categoryScores }),
     agentURI: record.server.erc8004?.agentURI ?? record.server.erc8004?.agentUri ?? record.server.agentURI ?? record.server.agentUri ?? null,
     registrationSha256,
+    ...(erc8004Identity ? { erc8004Identity } : {}),
+    ...(erc8004KeyContinuityReceipts.length > 0 ? { erc8004KeyContinuityReceipts } : {}),
     a2aMcpServiceReattested,
     ...(validationLineage.length > 0 ? { validationLineage } : {}),
     remoteUrls: remoteUrlsFromRecord(record),
