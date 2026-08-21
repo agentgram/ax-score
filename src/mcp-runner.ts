@@ -58,6 +58,7 @@ import { McpRepoPopularityAudit } from './audits/mcp-repo-popularity.js';
 // Audits — Operational
 import { McpRemoteReachableAudit } from './audits/mcp-remote-reachable.js';
 import { McpRemoteTlsAudit } from './audits/mcp-remote-tls.js';
+import { McpRemoteSemanticConsistencyAudit } from './audits/mcp-remote-semantic-consistency.js';
 import { McpServerRecordValidAudit } from './audits/mcp-server-record-valid.js';
 import { Erc8004RegistrationBindingAudit } from './audits/erc8004-registration-service-binding.js';
 
@@ -91,6 +92,7 @@ function createMcpAudits(): BaseAudit[] {
     // Operational
     new McpRemoteReachableAudit(),
     new McpRemoteTlsAudit(),
+    new McpRemoteSemanticConsistencyAudit(),
     new McpServerRecordValidAudit(),
     new Erc8004RegistrationBindingAudit(),
     // Documentation
@@ -486,9 +488,31 @@ function entryFromMcpReport(report: McpReport, record: McpRegistryRecord): McpSw
   const erc8004KeyContinuityReceipts = Array.isArray(identityItem?.['keyContinuityReceipts'])
     ? identityItem['keyContinuityReceipts'] as Erc8004KeyContinuityReceipt[]
     : [];
+  const semanticConsistencyItem = report.audits['mcp-remote-semantic-consistency']?.details?.items?.[0];
+  const semanticStatus = semanticConsistencyItem?.['status'];
+  const remoteSemanticConsistency =
+    (semanticStatus === 'parity' ||
+      semanticStatus === 'divergence' ||
+      semanticStatus === 'insufficient-evidence' ||
+      semanticStatus === 'not-applicable') &&
+    typeof semanticConsistencyItem?.['declaredRemoteCount'] === 'number' &&
+    typeof semanticConsistencyItem['attestedRemoteCount'] === 'number' &&
+    typeof semanticConsistencyItem['exportConfidence'] === 'number'
+    ? {
+        status: semanticStatus as 'parity' | 'divergence' | 'insufficient-evidence' | 'not-applicable',
+        declaredRemoteCount: semanticConsistencyItem['declaredRemoteCount'],
+        attestedRemoteCount: semanticConsistencyItem['attestedRemoteCount'],
+        exportConfidence: semanticConsistencyItem['exportConfidence'],
+        receipt: semanticConsistencyItem['receipt'],
+      }
+    : undefined;
   return {
     server: report.server,
     serverVersion: report.serverVersion,
+    ...(typeof remoteSemanticConsistency?.exportConfidence === 'number'
+      ? { exportConfidence: remoteSemanticConsistency.exportConfidence }
+      : {}),
+    ...(remoteSemanticConsistency ? { remoteSemanticConsistency } : {}),
     publisherAuthProvenance: buildPublisherAuthProvenance({ report, record, categoryScores }),
     agentURI: record.server.erc8004?.agentURI ?? record.server.erc8004?.agentUri ?? record.server.agentURI ?? record.server.agentUri ?? null,
     registrationSha256,

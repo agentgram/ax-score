@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { McpRemoteReachableAudit } from '../mcp-remote-reachable.js';
+import { McpRemoteSemanticConsistencyAudit } from '../mcp-remote-semantic-consistency.js';
 import { McpRemoteTlsAudit } from '../mcp-remote-tls.js';
 import { McpServerRecordValidAudit } from '../mcp-server-record-valid.js';
 import { makeMcpArtifacts, makeRemoteProbe, HEALTHY_SERVER } from './mcp-fixtures.js';
@@ -45,6 +46,66 @@ describe('McpRemoteReachableAudit', () => {
   it('should be not applicable for package-only servers', async () => {
     const result = await audit.audit(makeMcpArtifacts({ remotes: [] }));
     expect(result.applicability).toBe('not-applicable');
+  });
+});
+
+describe('McpRemoteSemanticConsistencyAudit', () => {
+  const audit = new McpRemoteSemanticConsistencyAudit();
+
+  it('should fail and surface export-confidence reduction when remotes diverge', async () => {
+    const artifacts = makeMcpArtifacts({
+      remotes: [
+        makeRemoteProbe({ url: 'https://a.acme.dev/mcp' }),
+        makeRemoteProbe({
+          url: 'https://b.acme.dev/mcp',
+          semanticProbe: {
+            attempted: true,
+            status: 'attested',
+            statusCode: 200,
+            protocolVersion: '2024-11-05',
+            serverName: 'todo-shadow',
+            serverVersion: '1.2.3',
+            capabilitiesSha256: 'different-capabilities-sha256',
+            canonicalSha256: 'different-canonical-sha256',
+          },
+        }),
+      ],
+    });
+    artifacts['mcpRemote'] = {
+      ...artifacts['mcpRemote'],
+      semanticConsistency: {
+        status: 'divergence',
+        declaredRemoteCount: 2,
+        attestedRemoteCount: 2,
+        exportConfidence: 0.6,
+        receipt: {
+          signatureAlgorithm: 'ed25519',
+          canonicalization: 'json-stable-v1',
+          payload: {
+            canonicalization: 'mcp-remote-semantic-v1',
+            request: {} as never,
+            status: 'divergence',
+            declaredRemoteCount: 2,
+            attestedRemoteCount: 2,
+            baselineCanonicalSha256: 'fixture-canonical-sha256',
+            remotes: [],
+          },
+          payloadSha256: 'fixture-payload-sha256',
+          signatureBase64: 'fixture-signature',
+          publicKeyBase64: 'fixture-public-key',
+          signedAt: '2026-07-13T00:00:00.000Z',
+        },
+      },
+    };
+
+    const result = await audit.audit(artifacts);
+
+    expect(result.score).toBe(0);
+    expect(result.details?.items?.[0]).toMatchObject({
+      status: 'divergence',
+      exportConfidence: 0.6,
+      receipt: { signatureAlgorithm: 'ed25519' },
+    });
   });
 });
 
