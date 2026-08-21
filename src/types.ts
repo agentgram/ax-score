@@ -259,6 +259,43 @@ export interface Erc8004IdentityContinuityEvidence {
   receipt?: Erc8004KeyContinuityReceipt;
 }
 
+export type Erc8004OwnershipEventKind = 'transfer' | 'setAgentWallet' | 'unsetAgentWallet';
+
+export interface Erc8004OwnershipEvent {
+  kind: Erc8004OwnershipEventKind;
+  agentId: string | null;
+  txHash?: string | null;
+  blockNumber?: number | null;
+  logIndex?: number | null;
+  occurredAt?: string | null;
+  from?: string | null;
+  to?: string | null;
+  owner?: string | null;
+  agentWallet?: string | null;
+}
+
+export interface Erc8004OwnershipEpochEvidence {
+  agentId: string | null;
+  owner: string | null;
+  agentWallet: string | null;
+  startEvent: string | null;
+  endEvent: string | null;
+  paidOutcomeReceiptCount: number;
+  reputationWeight:
+    | 'pre-transfer-isolated'
+    | 'reduced-until-reattestation'
+    | 'full-after-reattestation';
+}
+
+export interface Erc8004OwnershipContinuityEvidence {
+  ownershipTransferred: boolean;
+  paymentWalletChanged: boolean;
+  preTransferPaidEvidenceIsolated: boolean;
+  currentEpochPaymentWalletReattested: boolean;
+  fullWeightAllowed: boolean;
+  events: Erc8004OwnershipEvent[];
+}
+
 export interface AgentServiceBindingEvidence {
   agentURI: string;
   registrationSha256?: string;
@@ -345,6 +382,12 @@ export interface McpSweepEntry {
   erc8004Identity?: Erc8004AgentIdentityEvidence;
   /** Signed old-to-new key continuity or explicit revocation receipts exported by the current registration. */
   erc8004KeyContinuityReceipts?: Erc8004KeyContinuityReceipt[];
+  /** ERC-721 Transfer plus setAgentWallet/unsetAgentWallet logs captured for ownership epoch continuity. */
+  erc8004OwnershipEvents?: Erc8004OwnershipEvent[];
+  /** Paid outcome receipts observed before ownership epoch attribution. */
+  paidOutcomeReceiptCount?: number;
+  /** Reputation evidence receipts observed before ownership epoch attribution. */
+  reputationEvidenceCount?: number;
   /** True only when declared A2A/MCP services were re-attested after dereferencing. */
   a2aMcpServiceReattested?: boolean;
   /** ERC-8004 validation responses grouped by requestHash/original validator. */
@@ -479,7 +522,9 @@ export interface Erc8004AgentUriLineageEvidence {
   previousIdentity?: Erc8004AgentIdentityEvidence;
   currentIdentity?: Erc8004AgentIdentityEvidence;
   identityContinuity?: Erc8004IdentityContinuityEvidence;
-  transition: 'agent-uri-changed' | 'registration-hash-changed';
+  ownershipEpochs?: Erc8004OwnershipEpochEvidence[];
+  ownershipContinuity?: Erc8004OwnershipContinuityEvidence;
+  transition: 'agent-uri-changed' | 'registration-hash-changed' | 'ownership-epoch-changed';
 }
 
 export interface McpEndpointDeprecationSnapshot {

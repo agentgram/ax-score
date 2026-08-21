@@ -345,6 +345,170 @@ describe('diffMcpSweepReports', () => {
     });
   });
 
+  it('isolates paid reputation evidence across ERC-721 ownership transfer until the new owner re-attests a payment wallet', () => {
+    const baseEntry = makeReport().entries[0]!;
+    const previous: McpSweepReport = {
+      ...makeReport(),
+      timestamp: '2026-08-13T00:00:00.000Z',
+      entries: [
+        {
+          ...baseEntry,
+          score: 91,
+          agentURI: 'https://agent.acme.dev/agent.json',
+          registrationSha256: 'old-registration-hash',
+          a2aMcpServiceReattested: true,
+          paidOutcomeReceiptCount: 3,
+          erc8004Identity: {
+            agentId: '7',
+            owner: '0xoldowner',
+            identityRegistry: '0xregistry',
+            chainId: '8453',
+            ed25519PublicKeys: [],
+          },
+        },
+      ] as McpSweepReport['entries'],
+    };
+    const current: McpSweepReport = {
+      ...makeReport(),
+      timestamp: '2026-08-14T00:00:00.000Z',
+      entries: [
+        {
+          ...baseEntry,
+          score: 96,
+          agentURI: 'https://agent.acme.dev/agent.json',
+          registrationSha256: 'new-registration-hash',
+          a2aMcpServiceReattested: false,
+          erc8004Identity: {
+            agentId: '7',
+            owner: '0xnewowner',
+            identityRegistry: '0xregistry',
+            chainId: '8453',
+            ed25519PublicKeys: [],
+          },
+          erc8004OwnershipEvents: [
+            {
+              kind: 'transfer',
+              agentId: '7',
+              from: '0xoldowner',
+              to: '0xnewowner',
+              txHash: '0xtransfer',
+              blockNumber: 100,
+              logIndex: 0,
+            },
+          ],
+        },
+      ] as McpSweepReport['entries'],
+    };
+
+    const diff = diffMcpSweepReports(current, previous);
+
+    expect(diff.agentUriLineage[0]).toMatchObject({
+      reputationWeightRetained: false,
+      ownershipContinuity: {
+        ownershipTransferred: true,
+        preTransferPaidEvidenceIsolated: true,
+        currentEpochPaymentWalletReattested: false,
+        fullWeightAllowed: false,
+      },
+    });
+    expect(diff.agentUriLineage[0]?.ownershipEpochs).toEqual([
+      expect.objectContaining({
+        owner: '0xoldowner',
+        agentWallet: null,
+        paidOutcomeReceiptCount: 3,
+        reputationWeight: 'pre-transfer-isolated',
+      }),
+      expect.objectContaining({
+        owner: '0xnewowner',
+        agentWallet: null,
+        paidOutcomeReceiptCount: 0,
+        reputationWeight: 'reduced-until-reattestation',
+      }),
+    ]);
+  });
+
+  it('retains full AX Score weight after transfer only when the new owner sets a payment wallet and services are re-attested', () => {
+    const baseEntry = makeReport().entries[0]!;
+    const previous: McpSweepReport = {
+      ...makeReport(),
+      timestamp: '2026-08-13T00:00:00.000Z',
+      entries: [
+        {
+          ...baseEntry,
+          score: 91,
+          agentURI: 'https://agent.acme.dev/agent.json',
+          registrationSha256: 'old-registration-hash',
+          a2aMcpServiceReattested: true,
+          paidOutcomeReceiptCount: 3,
+          erc8004Identity: {
+            agentId: '7',
+            owner: '0xoldowner',
+            identityRegistry: '0xregistry',
+            chainId: '8453',
+            ed25519PublicKeys: [],
+          },
+        },
+      ] as McpSweepReport['entries'],
+    };
+    const current: McpSweepReport = {
+      ...makeReport(),
+      timestamp: '2026-08-14T00:00:00.000Z',
+      entries: [
+        {
+          ...baseEntry,
+          score: 96,
+          agentURI: 'https://agent.acme.dev/agent.json',
+          registrationSha256: 'new-registration-hash',
+          a2aMcpServiceReattested: true,
+          erc8004Identity: {
+            agentId: '7',
+            owner: '0xnewowner',
+            identityRegistry: '0xregistry',
+            chainId: '8453',
+            ed25519PublicKeys: [],
+          },
+          erc8004OwnershipEvents: [
+            {
+              kind: 'transfer',
+              agentId: '7',
+              from: '0xoldowner',
+              to: '0xnewowner',
+              txHash: '0xtransfer',
+              blockNumber: 100,
+              logIndex: 0,
+            },
+            {
+              kind: 'setAgentWallet',
+              agentId: '7',
+              owner: '0xnewowner',
+              agentWallet: '0xwallet',
+              txHash: '0xwallet',
+              blockNumber: 101,
+              logIndex: 0,
+            },
+          ],
+        },
+      ] as McpSweepReport['entries'],
+    };
+
+    const diff = diffMcpSweepReports(current, previous);
+
+    expect(diff.agentUriLineage[0]).toMatchObject({
+      reputationWeightRetained: true,
+      ownershipContinuity: {
+        ownershipTransferred: true,
+        preTransferPaidEvidenceIsolated: true,
+        currentEpochPaymentWalletReattested: true,
+        fullWeightAllowed: true,
+      },
+    });
+    expect(diff.agentUriLineage[0]?.ownershipEpochs?.at(-1)).toMatchObject({
+      owner: '0xnewowner',
+      agentWallet: '0xwallet',
+      reputationWeight: 'full-after-reattestation',
+    });
+  });
+
   it('allows explicit signed revocation receipts to retain continuity through an ERC-8004 Ed25519 key rotation', () => {
     const baseEntry = makeReport().entries[0]!;
     const continuity = makeContinuityFixture();

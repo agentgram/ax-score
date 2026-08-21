@@ -5,6 +5,9 @@ import type {
   Erc8004AgentUriLineageEvidence,
   Erc8004IdentityContinuityEvidence,
   Erc8004KeyContinuityReceipt,
+  Erc8004OwnershipContinuityEvidence,
+  Erc8004OwnershipEpochEvidence,
+  Erc8004OwnershipEvent,
   McpReportArtifactManifest,
   McpReportPublishedUrls,
   McpSemanticVersionReceipt,
@@ -239,6 +242,116 @@ function evaluateIdentityContinuity(
   };
 }
 
+function eventCursor(event: Erc8004OwnershipEvent): string {
+  return [event.txHash ?? 'unknown-tx', event.blockNumber ?? 'unknown-block', event.logIndex ?? 'unknown-log'].join(':');
+}
+
+function sortOwnershipEvents(events: Erc8004OwnershipEvent[]): Erc8004OwnershipEvent[] {
+  return [...events].sort((a, b) => {
+    const blockDelta = (a.blockNumber ?? Number.MAX_SAFE_INTEGER) - (b.blockNumber ?? Number.MAX_SAFE_INTEGER);
+    if (blockDelta !== 0) return blockDelta;
+    const logDelta = (a.logIndex ?? Number.MAX_SAFE_INTEGER) - (b.logIndex ?? Number.MAX_SAFE_INTEGER);
+    if (logDelta !== 0) return logDelta;
+    return eventCursor(a).localeCompare(eventCursor(b));
+  });
+}
+
+function attributionEvidenceCount(entry: McpSweepEntry): number {
+  return Math.max(entry.paidOutcomeReceiptCount ?? 0, entry.reputationEvidenceCount ?? 0);
+}
+
+function detectOwnershipContinuity(
+  previousEntry: McpSweepEntry,
+  currentEntry: McpSweepEntry,
+  servicesReattested: boolean
+):
+  | {
+      ownershipEpochs: Erc8004OwnershipEpochEvidence[];
+      ownershipContinuity: Erc8004OwnershipContinuityEvidence;
+    }
+  | undefined {
+  const previousOwner = previousEntry.erc8004Identity?.owner ?? null;
+  const currentOwner = currentEntry.erc8004Identity?.owner ?? null;
+  const agentId = currentEntry.erc8004Identity?.agentId ?? previousEntry.erc8004Identity?.agentId ?? null;
+  const events = sortOwnershipEvents(currentEntry.erc8004OwnershipEvents ?? []);
+  const transferEvents = events.filter((event) => event.kind === 'transfer');
+  const walletEvents = events.filter(
+    (event) => event.kind === 'setAgentWallet' || event.kind === 'unsetAgentWallet'
+  );
+  const ownershipTransferred = transferEvents.length > 0 || (!!previousOwner && !!currentOwner && previousOwner !== currentOwner);
+
+  if (!ownershipTransferred && walletEvents.length === 0) return undefined;
+
+  const preTransferPaidEvidenceIsolated = ownershipTransferred && attributionEvidenceCount(previousEntry) > 0;
+  const epochs: Erc8004OwnershipEpochEvidence[] = [
+    {
+      agentId,
+      owner: previousOwner,
+      agentWallet: null,
+      startEvent: null,
+      endEvent: null,
+      paidOutcomeReceiptCount: preTransferPaidEvidenceIsolated ? attributionEvidenceCount(previousEntry) : 0,
+      reputationWeight: preTransferPaidEvidenceIsolated
+        ? 'pre-transfer-isolated'
+        : 'reduced-until-reattestation',
+    },
+  ];
+
+  for (const event of events) {
+    const currentEpoch = epochs.at(-1)!;
+    if (event.kind === 'transfer') {
+      currentEpoch.endEvent = eventCursor(event);
+      epochs.push({
+        agentId: event.agentId ?? agentId,
+        owner: event.to ?? currentOwner,
+        agentWallet: null,
+        startEvent: eventCursor(event),
+        endEvent: null,
+        paidOutcomeReceiptCount: 0,
+        reputationWeight: 'reduced-until-reattestation',
+      });
+      continue;
+    }
+    if (event.kind === 'setAgentWallet') {
+      currentEpoch.agentWallet = event.agentWallet ?? null;
+      continue;
+    }
+    currentEpoch.agentWallet = null;
+  }
+
+  if (ownershipTransferred && transferEvents.length === 0 && epochs.length === 1) {
+    epochs[0]!.endEvent = 'owner-changed-without-transfer-log';
+    epochs.push({
+      agentId,
+      owner: currentOwner,
+      agentWallet: null,
+      startEvent: 'owner-changed-without-transfer-log',
+      endEvent: null,
+      paidOutcomeReceiptCount: 0,
+      reputationWeight: 'reduced-until-reattestation',
+    });
+  }
+
+  const currentEpoch = epochs.at(-1)!;
+  const currentEpochPaymentWalletReattested = Boolean(currentEpoch.agentWallet);
+  const fullWeightAllowed = servicesReattested && (!ownershipTransferred || currentEpochPaymentWalletReattested);
+  currentEpoch.reputationWeight = fullWeightAllowed
+    ? 'full-after-reattestation'
+    : 'reduced-until-reattestation';
+
+  return {
+    ownershipEpochs: epochs,
+    ownershipContinuity: {
+      ownershipTransferred,
+      paymentWalletChanged: walletEvents.length > 0,
+      preTransferPaidEvidenceIsolated,
+      currentEpochPaymentWalletReattested,
+      fullWeightAllowed,
+      events,
+    },
+  };
+}
+
 function detectAgentUriLineage(
   currentByServer: Map<string, McpSweepEntry>,
   previousByServer: Map<string, McpSweepEntry>
@@ -254,14 +367,17 @@ function detectAgentUriLineage(
       if (!previousAgentURI && !currentAgentURI && !previousRegistrationSha256 && !currentRegistrationSha256) return [];
       const uriChanged = previousAgentURI !== currentAgentURI;
       const hashChanged = previousRegistrationSha256 !== currentRegistrationSha256;
-      if (!uriChanged && !hashChanged) return [];
       const servicesReattested = currentEntry.a2aMcpServiceReattested === true;
       const identityContinuity = evaluateIdentityContinuity(previousEntry, currentEntry);
       const identityAllowsRetention =
         !identityContinuity || !identityContinuity.ed25519KeyChanged || identityContinuity.continuityVerified;
+      const ownershipEvidence = detectOwnershipContinuity(previousEntry, currentEntry, servicesReattested);
+      if (!uriChanged && !hashChanged && !ownershipEvidence) return [];
       const transition: Erc8004AgentUriLineageEvidence['transition'] = uriChanged
         ? 'agent-uri-changed'
-        : 'registration-hash-changed';
+        : hashChanged
+          ? 'registration-hash-changed'
+          : 'ownership-epoch-changed';
       return [{
         server,
         previousAgentURI,
@@ -269,10 +385,12 @@ function detectAgentUriLineage(
         previousRegistrationSha256,
         currentRegistrationSha256,
         servicesReattested,
-        reputationWeightRetained: servicesReattested && identityAllowsRetention,
+        reputationWeightRetained:
+          servicesReattested && identityAllowsRetention && (ownershipEvidence?.ownershipContinuity.fullWeightAllowed ?? true),
         ...(previousEntry.erc8004Identity ? { previousIdentity: previousEntry.erc8004Identity } : {}),
         ...(currentEntry.erc8004Identity ? { currentIdentity: currentEntry.erc8004Identity } : {}),
         ...(identityContinuity ? { identityContinuity } : {}),
+        ...(ownershipEvidence ? ownershipEvidence : {}),
         transition,
       }];
     })
