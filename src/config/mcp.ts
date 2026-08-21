@@ -59,6 +59,7 @@ const MCP_BASE_CATEGORIES: CategoryConfig[] = [
     auditRefs: [
       { id: 'mcp-remote-reachable', weight: 8 },
       { id: 'mcp-remote-tls', weight: 4 },
+      { id: 'mcp-remote-semantic-consistency', weight: 4 },
       { id: 'mcp-server-record-valid', weight: 3 },
       { id: 'erc8004-registration-service-binding', weight: 3 },
     ],

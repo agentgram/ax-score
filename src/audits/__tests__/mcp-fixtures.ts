@@ -120,6 +120,16 @@ export function makeRemoteProbe(overrides: Partial<RemoteProbe> = {}): RemotePro
     decision: 'probe',
     reason: 'Remote endpoint resolved without private/link-local DNS or IP evidence.',
   };
+  const semanticProbe = overrides.semanticProbe ?? {
+    attempted: true,
+    status: 'attested' as const,
+    statusCode: 200,
+    protocolVersion: '2024-11-05',
+    serverName: 'todo-server',
+    serverVersion: '1.2.3',
+    capabilitiesSha256: 'fixture-capabilities-sha256',
+    canonicalSha256: 'fixture-canonical-sha256',
+  };
 
   return {
     url,
@@ -146,12 +156,39 @@ export function makeRemoteProbe(overrides: Partial<RemoteProbe> = {}): RemotePro
       signature: 'fixture-signature',
       publicKey: 'fixture-public-key',
     },
+    semanticProbe,
     ...overrides,
   };
 }
 
 export function makeRemoteArtifact(probes?: RemoteProbe[]): McpRemoteGatherResult {
-  return { remotes: probes ?? [makeRemoteProbe()] };
+  const remotes = probes ?? [makeRemoteProbe()];
+  return {
+    remotes,
+    semanticConsistency: {
+      status: remotes.length > 1 ? 'parity' : 'insufficient-evidence',
+      declaredRemoteCount: remotes.length,
+      attestedRemoteCount: remotes.filter((remote) => remote.semanticProbe.status === 'attested').length,
+      exportConfidence: 1,
+      receipt: {
+        signatureAlgorithm: 'ed25519',
+        canonicalization: 'json-stable-v1',
+        payload: {
+          canonicalization: 'mcp-remote-semantic-v1',
+          request: {} as never,
+          status: remotes.length > 1 ? 'parity' : 'insufficient-evidence',
+          declaredRemoteCount: remotes.length,
+          attestedRemoteCount: remotes.filter((remote) => remote.semanticProbe.status === 'attested').length,
+          baselineCanonicalSha256: remotes[0]?.semanticProbe.canonicalSha256 ?? null,
+          remotes: [],
+        },
+        payloadSha256: 'fixture-payload-sha256',
+        signatureBase64: 'fixture-signature',
+        publicKeyBase64: 'fixture-public-key',
+        signedAt: '2026-07-13T00:00:00.000Z',
+      },
+    },
+  };
 }
 
 export interface McpArtifactOverrides {

@@ -11,6 +11,23 @@ function statusResponse(status: number): Promise<Response> {
   } as unknown as Response);
 }
 
+function initializeResponse(name: string, tools: string[] = ['search']): Promise<Response> {
+  return Promise.resolve({
+    ok: true,
+    status: 200,
+    body: null,
+    json: () => Promise.resolve({
+      jsonrpc: '2.0',
+      id: 1,
+      result: {
+        protocolVersion: '2024-11-05',
+        serverInfo: { name, version: '1.2.3' },
+        capabilities: { tools },
+      },
+    }),
+  } as unknown as Response);
+}
+
 function registryArtifact(remotes: McpRemoteRef[]): Record<string, McpRegistryGatherResult> {
   return {
     mcpRegistry: {
@@ -55,7 +72,55 @@ describe('McpRemoteGatherer', () => {
     expect(probe.fetchDecisionReceipt.signatureAlgorithm).toBe('ed25519');
     expect(probe.fetchDecisionReceipt.signature).toMatch(/^[A-Za-z0-9+/]+={0,2}$/);
     expect(probe.fetchDecisionReceipt.publicKey).toMatch(/^[A-Za-z0-9+/]+={0,2}$/);
-    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(probe.semanticProbe.status).toBe('unavailable');
+  });
+
+  it('should attest parity when multiple remotes return the same MCP semantics', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+      if (init?.method === 'POST') return initializeResponse('todo-server');
+      return statusResponse(204);
+    });
+
+    const result = await gatherer.gather(
+      { server: 'io.github.acme/todo-server' },
+      registryArtifact([
+        { type: 'streamable-http', url: 'https://203.0.113.10/mcp' },
+        { type: 'streamable-http', url: 'https://203.0.113.11/mcp' },
+      ])
+    );
+
+    expect(result.semanticConsistency.status).toBe('parity');
+    expect(result.semanticConsistency.attestedRemoteCount).toBe(2);
+    expect(result.semanticConsistency.exportConfidence).toBe(1);
+    expect(result.semanticConsistency.receipt.signatureAlgorithm).toBe('ed25519');
+    expect(result.remotes.map((remote) => remote.semanticProbe.canonicalSha256)).toEqual([
+      result.remotes[0]!.semanticProbe.canonicalSha256,
+      result.remotes[0]!.semanticProbe.canonicalSha256,
+    ]);
+  });
+
+  it('should sign divergence evidence and lower export confidence for mismatched remotes', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input);
+      if (init?.method === 'POST') {
+        return initializeResponse(url.includes('113.11') ? 'todo-shadow' : 'todo-server');
+      }
+      return statusResponse(204);
+    });
+
+    const result = await gatherer.gather(
+      { server: 'io.github.acme/todo-server' },
+      registryArtifact([
+        { type: 'streamable-http', url: 'https://203.0.113.10/mcp' },
+        { type: 'streamable-http', url: 'https://203.0.113.11/mcp' },
+      ])
+    );
+
+    expect(result.semanticConsistency.status).toBe('divergence');
+    expect(result.semanticConsistency.exportConfidence).toBe(0.6);
+    expect(result.semanticConsistency.receipt.payload.status).toBe('divergence');
+    expect(result.semanticConsistency.receipt.payload.remotes).toHaveLength(2);
   });
 
   it('should mark endpoints that respond as reachable (405 counts)', async () => {
@@ -121,7 +186,7 @@ describe('McpRemoteGatherer', () => {
       registryArtifact([{ type: 'streamable-http', url: 'https://flaky.acme.dev/mcp' }])
     );
 
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
     expect(result.remotes[0]!.reachable).toBe(true);
     expect(result.remotes[0]!.statusCode).toBe(200);
   });

@@ -1,4 +1,4 @@
-import { createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
+import { createHash, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import type { McpConfig } from '../types.js';
@@ -9,6 +9,17 @@ import { DEFAULT_TIMEOUT } from '../config/default.js';
 const USER_AGENT = 'AX-Score/1.0 (mcp-audit)';
 const RETRY_DELAY_MS = 500;
 const MAX_REDIRECTS = 5;
+const MCP_INITIALIZE_PROTOCOL_VERSION = '2024-11-05';
+const MCP_INITIALIZE_REQUEST = {
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'initialize',
+  params: {
+    protocolVersion: MCP_INITIALIZE_PROTOCOL_VERSION,
+    capabilities: {},
+    clientInfo: { name: 'ax-score', version: '0.3.0' },
+  },
+};
 
 export interface RemoteResolutionEvidence {
   hostname: string;
@@ -48,6 +59,55 @@ export interface RemoteFetchDecisionReceipt {
   publicKey: string;
 }
 
+export interface RemoteSemanticProbe {
+  attempted: boolean;
+  status: 'attested' | 'unavailable' | 'blocked';
+  statusCode: number | null;
+  protocolVersion: string | null;
+  serverName: string | null;
+  serverVersion: string | null;
+  capabilitiesSha256: string | null;
+  canonicalSha256: string | null;
+  error?: string;
+}
+
+export interface RemoteSemanticConsistencyPayload {
+  canonicalization: 'mcp-remote-semantic-v1';
+  request: typeof MCP_INITIALIZE_REQUEST;
+  status: 'parity' | 'divergence' | 'insufficient-evidence' | 'not-applicable';
+  declaredRemoteCount: number;
+  attestedRemoteCount: number;
+  baselineCanonicalSha256: string | null;
+  remotes: Array<{
+    url: string;
+    type: string | null;
+    status: RemoteSemanticProbe['status'];
+    protocolVersion: string | null;
+    serverName: string | null;
+    serverVersion: string | null;
+    capabilitiesSha256: string | null;
+    canonicalSha256: string | null;
+  }>;
+}
+
+export interface RemoteSemanticConsistencyReceipt {
+  signatureAlgorithm: 'ed25519';
+  canonicalization: 'json-stable-v1';
+  payload: RemoteSemanticConsistencyPayload;
+  payloadSha256: string;
+  signatureBase64: string;
+  publicKeyBase64: string;
+  signedAt: string;
+}
+
+export interface RemoteSemanticConsistencyEvidence {
+  status: RemoteSemanticConsistencyPayload['status'];
+  declaredRemoteCount: number;
+  attestedRemoteCount: number;
+  exportConfidence: number;
+  receipt: RemoteSemanticConsistencyReceipt;
+}
+
 export interface RemoteProbe {
   url: string;
   type: string | null;
@@ -68,10 +128,13 @@ export interface RemoteProbe {
   resolutionPolicy: RemoteResolutionPolicy;
   /** Ed25519-signed receipt over the final fetch decision. */
   fetchDecisionReceipt: RemoteFetchDecisionReceipt;
+  /** MCP initialize/capability semantic attestation for this endpoint. */
+  semanticProbe: RemoteSemanticProbe;
 }
 
 export interface McpRemoteGatherResult extends GatherResult {
   remotes: RemoteProbe[];
+  semanticConsistency: RemoteSemanticConsistencyEvidence;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -86,6 +149,72 @@ function stableStringify(value: unknown): string {
     .sort()
     .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
     .join(',')}}`;
+}
+
+function sha256(value: unknown): string {
+  return createHash('sha256').update(stableStringify(value)).digest('hex');
+}
+
+function signSemanticConsistency(
+  payload: RemoteSemanticConsistencyPayload
+): RemoteSemanticConsistencyReceipt {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const publicKey = createPublicKey(privateKey);
+  const signedAt = new Date().toISOString();
+  const signaturePayload = { ...payload, signedAt };
+  const canonicalPayload = stableStringify(signaturePayload);
+
+  return {
+    signatureAlgorithm: 'ed25519',
+    canonicalization: 'json-stable-v1',
+    payload,
+    payloadSha256: sha256(payload),
+    signatureBase64: sign(null, Buffer.from(canonicalPayload), privateKey).toString('base64'),
+    publicKeyBase64: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+    signedAt,
+  };
+}
+
+function stringField(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function canonicalSemanticProbe(body: unknown): Pick<
+  RemoteSemanticProbe,
+  'protocolVersion' | 'serverName' | 'serverVersion' | 'capabilitiesSha256' | 'canonicalSha256'
+> {
+  const root = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+  const result =
+    root['result'] && typeof root['result'] === 'object'
+      ? (root['result'] as Record<string, unknown>)
+      : root;
+  const serverInfo =
+    result['serverInfo'] && typeof result['serverInfo'] === 'object'
+      ? (result['serverInfo'] as Record<string, unknown>)
+      : {};
+  const capabilities = result['capabilities'] ?? null;
+  const semantic = {
+    protocolVersion: stringField(result['protocolVersion']),
+    serverName: stringField(serverInfo['name']),
+    serverVersion: stringField(serverInfo['version']),
+    capabilitiesSha256: sha256(capabilities),
+  };
+
+  return { ...semantic, canonicalSha256: sha256(semantic) };
+}
+
+function emptySemanticProbe(status: 'unavailable' | 'blocked', error: string): RemoteSemanticProbe {
+  return {
+    attempted: false,
+    status,
+    statusCode: null,
+    protocolVersion: null,
+    serverName: null,
+    serverVersion: null,
+    capabilitiesSha256: null,
+    canonicalSha256: null,
+    error,
+  };
 }
 
 function signFetchDecision(payload: RemoteFetchDecisionPayload): RemoteFetchDecisionReceipt {
@@ -232,6 +361,7 @@ function probeFromDecision(
   redirectChain: RemoteRedirectEvidence[],
   resolutionPolicy: RemoteResolutionPolicy,
   fetchDecisionReceipt: RemoteFetchDecisionReceipt,
+  semanticProbe: RemoteSemanticProbe,
   overrides: Partial<
     Pick<RemoteProbe, 'validUrl' | 'privateHost' | 'reachable' | 'statusCode'>
   > = {}
@@ -248,6 +378,7 @@ function probeFromDecision(
     redirectChain,
     resolutionPolicy,
     fetchDecisionReceipt,
+    semanticProbe,
   };
 }
 
@@ -348,6 +479,100 @@ class RemotePolicyError extends Error {
   }
 }
 
+async function probeSemanticInitialize(
+  url: string,
+  timeout: number,
+  type: string | null
+): Promise<RemoteSemanticProbe> {
+  try {
+    const decision = await resolveUrl(url, type, []);
+    if (!decision.policy.allowed) {
+      return emptySemanticProbe('blocked', decision.policy.reason);
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'User-Agent': USER_AGENT,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(MCP_INITIALIZE_REQUEST),
+        redirect: 'manual',
+      });
+      if (!res.ok || typeof res.json !== 'function') {
+        return {
+          ...emptySemanticProbe(
+            'unavailable',
+            `MCP initialize request returned HTTP ${res.status}.`
+          ),
+          attempted: true,
+          statusCode: res.status,
+        };
+      }
+      const semantic = canonicalSemanticProbe(await res.json());
+      return { attempted: true, status: 'attested', statusCode: res.status, ...semantic };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err) {
+    return {
+      ...emptySemanticProbe(
+        'unavailable',
+        err instanceof Error ? err.message : 'MCP initialize request failed.'
+      ),
+      attempted: true,
+    };
+  }
+}
+
+function buildSemanticConsistency(remotes: RemoteProbe[]): RemoteSemanticConsistencyEvidence {
+  const attested = remotes.filter((remote) => remote.semanticProbe.status === 'attested');
+  const baseline = attested[0]?.semanticProbe.canonicalSha256 ?? null;
+  const hasDivergence = Boolean(
+    baseline && attested.some((remote) => remote.semanticProbe.canonicalSha256 !== baseline)
+  );
+  const status: RemoteSemanticConsistencyPayload['status'] =
+    remotes.length === 0
+      ? 'not-applicable'
+      : attested.length < 2
+        ? 'insufficient-evidence'
+        : hasDivergence
+          ? 'divergence'
+          : 'parity';
+  const exportConfidence = status === 'divergence' ? 0.6 : 1;
+  const payload: RemoteSemanticConsistencyPayload = {
+    canonicalization: 'mcp-remote-semantic-v1',
+    request: MCP_INITIALIZE_REQUEST,
+    status,
+    declaredRemoteCount: remotes.length,
+    attestedRemoteCount: attested.length,
+    baselineCanonicalSha256: baseline,
+    remotes: remotes.map((remote) => ({
+      url: remote.url,
+      type: remote.type,
+      status: remote.semanticProbe.status,
+      protocolVersion: remote.semanticProbe.protocolVersion,
+      serverName: remote.semanticProbe.serverName,
+      serverVersion: remote.semanticProbe.serverVersion,
+      capabilitiesSha256: remote.semanticProbe.capabilitiesSha256,
+      canonicalSha256: remote.semanticProbe.canonicalSha256,
+    })),
+  };
+
+  return {
+    status,
+    declaredRemoteCount: remotes.length,
+    attestedRemoteCount: attested.length,
+    exportConfidence,
+    receipt: signSemanticConsistency(payload),
+  };
+}
+
 async function probeRemote(
   url: string,
   type: string | null,
@@ -382,6 +607,7 @@ async function probeRemote(
       redirectChain: [],
       resolutionPolicy: policy,
       fetchDecisionReceipt: receipt,
+      semanticProbe: emptySemanticProbe('unavailable', policy.reason),
     };
   }
 
@@ -397,6 +623,7 @@ async function probeRemote(
       [],
       initialDecision.policy,
       initialDecision.receipt,
+      emptySemanticProbe('blocked', initialDecision.policy.reason),
       { privateHost: true }
     );
   }
@@ -406,6 +633,10 @@ async function probeRemote(
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const result = await fetchStatus(url, timeout, type);
+      const semanticProbe =
+        result.statusCode < 500
+          ? await probeSemanticInitialize(url, timeout, type)
+          : emptySemanticProbe('unavailable', `Reachability probe returned HTTP ${result.statusCode}.`);
       return probeFromDecision(
         url,
         type,
@@ -418,6 +649,7 @@ async function probeRemote(
           reason: 'Remote endpoint probe completed after safe DNS/IP and redirect checks.',
         },
         result.receipt,
+        semanticProbe,
         { privateHost: false, reachable: true, statusCode: result.statusCode }
       );
     } catch (err) {
@@ -430,6 +662,7 @@ async function probeRemote(
           err.redirectChain,
           err.policy,
           err.receipt,
+          emptySemanticProbe('blocked', err.policy.reason),
           {
             privateHost: true,
           }
@@ -447,6 +680,7 @@ async function probeRemote(
     [],
     initialDecision.policy,
     initialDecision.receipt,
+    emptySemanticProbe('unavailable', 'Remote endpoint did not respond to reachability probes.'),
     { privateHost: false }
   );
 }
@@ -475,6 +709,6 @@ export class McpRemoteGatherer {
         .map((ref) => probeRemote(ref.url ?? '', ref.type ?? null, timeout))
     );
 
-    return { remotes };
+    return { remotes, semanticConsistency: buildSemanticConsistency(remotes) };
   }
 }

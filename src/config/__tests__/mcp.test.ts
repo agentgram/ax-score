@@ -11,7 +11,7 @@ describe('MCP category configuration', () => {
   it('should reference each audit exactly once with a positive weight', () => {
     const ids = MCP_CATEGORIES.flatMap((cat) => cat.auditRefs.map((ref) => ref.id));
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toHaveLength(19);
+    expect(ids).toHaveLength(20);
     for (const cat of MCP_CATEGORIES) {
       for (const ref of cat.auditRefs) {
         expect(ref.weight).toBeGreaterThan(0);

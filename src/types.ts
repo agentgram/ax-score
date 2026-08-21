@@ -372,6 +372,16 @@ export interface McpReport {
 export interface McpSweepEntry {
   server: string;
   serverVersion: string | null;
+  /** Confidence applied to exported reputation evidence; lowered for semantic remote divergence. */
+  exportConfidence?: number;
+  /** Signed MCP initialize/capability parity or divergence evidence for Registry remotes. */
+  remoteSemanticConsistency?: {
+    status: 'parity' | 'divergence' | 'insufficient-evidence' | 'not-applicable';
+    declaredRemoteCount: number;
+    attestedRemoteCount: number;
+    exportConfidence: number;
+    receipt: unknown;
+  };
   /** Signed publisher-auth provenance bound to the AX scan before score export. */
   publisherAuthProvenance?: McpRegistryPublisherAuthProvenance;
   /** ERC-8004 agent registration URI captured during this sweep. */
