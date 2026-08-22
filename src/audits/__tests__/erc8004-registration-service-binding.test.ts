@@ -185,6 +185,103 @@ describe('buildProgressiveValidationLineage', () => {
     });
   });
 
+  it('signs a feedback event-storage completeness verdict before lineage can be exported at full weight', async () => {
+    const payload = 'event retained feedback evidence';
+    const feedbackHash = createHash('sha256').update(payload).digest('hex');
+    const lineage = await buildProgressiveValidationLineage({
+      validationRequests: [
+        {
+          requestHash: '0xrequest',
+          validator: '0xvalidator',
+          validationResponses: [
+            {
+              score: 88,
+              endpoint: 'https://mcp.acme.dev/mcp',
+              feedbackURI: `data:text/plain,${encodeURIComponent(payload)}`,
+              feedbackHash,
+              transactionHash: '0xfeedbacktx',
+              blockNumber: 123,
+              logIndex: 4,
+              feedbackIndex: 7,
+              clientAddress: '0xclient',
+              value: 88,
+              valueDecimals: 0,
+              tag: 'final',
+              tag2: 'quality',
+              isRevoked: false,
+            },
+          ],
+        },
+      ],
+      timeout: 100,
+    });
+
+    expect(lineage[0]).toMatchObject({
+      allResponsesBound: true,
+      allResponseHashesVerified: true,
+      allFeedbackEventStorageComplete: true,
+    });
+    expect(lineage[0]!.responses[0]).toMatchObject({
+      endpoint: 'https://mcp.acme.dev/mcp',
+      canonicalEventPointer: {
+        eventName: 'NewFeedback',
+        transactionHash: '0xfeedbacktx',
+        blockNumber: 123,
+        logIndex: 4,
+        feedbackIndex: 7,
+      },
+      storageSnapshot: {
+        value: 88,
+        valueDecimals: 0,
+        tag1: 'final',
+        tag2: 'quality',
+        isRevoked: false,
+      },
+      eventStorageCompletenessVerdict: {
+        signatureAlgorithm: 'ed25519',
+        canonicalization: 'json-stable-v1',
+        verdictPayload: expect.objectContaining({
+          verdict: 'complete',
+          missingEventFields: [],
+          missingStorageFields: [],
+        }),
+      },
+    });
+  });
+
+  it('withholds full lineage weight when event-only feedback fields cannot be reconciled to storage', async () => {
+    const lineage = await buildProgressiveValidationLineage({
+      validationRequests: [
+        {
+          requestHash: '0xrequest',
+          validator: '0xvalidator',
+          validationResponses: [
+            {
+              score: 88,
+              responseHash: createHash('sha256').update('missing event payload').digest('hex'),
+              tag: 'final',
+              value: 88,
+              valueDecimals: 0,
+            },
+          ],
+        },
+      ],
+      timeout: 100,
+    });
+
+    expect(lineage[0]).toMatchObject({
+      allResponsesBound: true,
+      allResponseHashesVerified: false,
+      allFeedbackEventStorageComplete: false,
+    });
+    expect(lineage[0]!.responses[0]!.eventStorageCompletenessVerdict).toMatchObject({
+      verdictPayload: expect.objectContaining({
+        verdict: 'incomplete',
+        missingEventFields: expect.arrayContaining(['endpoint', 'feedbackURI', 'canonicalEventPointer']),
+      }),
+    });
+  });
+
   it('blocks private feedbackURI targets with a signed receipt before fetching or scoring them', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const lineage = await buildProgressiveValidationLineage({
@@ -250,9 +347,19 @@ describe('Erc8004RegistrationBindingAudit', () => {
         validator: '0xvalidator',
         validationResponses: [{
           score: 91,
+          endpoint: 'https://mcp.acme.dev/mcp',
           responseURI: `data:text/plain,${encodeURIComponent(payload)}`,
           responseHash: createHash('sha256').update(payload).digest('hex'),
+          transactionHash: '0xfeedbacktx',
+          blockNumber: 123,
+          logIndex: 4,
+          feedbackIndex: 7,
+          clientAddress: '0xclient',
+          value: 91,
+          valueDecimals: 0,
           tag: 'final',
+          tag2: 'quality',
+          isRevoked: false,
         }],
       }],
       timeout: 100,
@@ -273,6 +380,7 @@ describe('Erc8004RegistrationBindingAudit', () => {
       latestScore: 91,
       allResponsesBound: true,
       allResponseHashesVerified: true,
+      allFeedbackEventStorageComplete: true,
     }));
   });
 

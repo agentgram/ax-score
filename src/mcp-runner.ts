@@ -454,7 +454,7 @@ function entryFromMcpReport(report: McpReport, record: McpRegistryRecord): McpSw
   }
   const erc8004Audit = report.audits['erc8004-registration-service-binding'];
   const erc8004Items = erc8004Audit?.details?.items ?? [];
-  const erc8004ServiceItems = erc8004Items.filter((item) => item['kind'] !== 'erc8004-validation-lineage');
+  const erc8004ServiceItems = erc8004Items.filter((item) => item['kind'] === 'erc8004-service-binding');
   const registrationSha256 =
     erc8004ServiceItems
       .map((item) => item['registrationSha256'])
@@ -472,6 +472,7 @@ function entryFromMcpReport(report: McpReport, record: McpRegistryRecord): McpSw
       latestScore: item['latestScore'],
       allResponsesBound: item['allResponsesBound'],
       allResponseHashesVerified: item['allResponseHashesVerified'],
+      allFeedbackEventStorageComplete: item['allFeedbackEventStorageComplete'],
       responses: item['responses'],
     }))
     .filter((item): item is Erc8004ValidationLineageEvidence =>
@@ -481,6 +482,7 @@ function entryFromMcpReport(report: McpReport, record: McpRegistryRecord): McpSw
       Array.isArray(item.orderedTags) &&
       typeof item.allResponsesBound === 'boolean' &&
       typeof item.allResponseHashesVerified === 'boolean' &&
+      typeof item.allFeedbackEventStorageComplete === 'boolean' &&
       Array.isArray(item.responses)
     );
   const identityItem = erc8004Items.find((item) => item['kind'] === 'erc8004-identity');

@@ -114,7 +114,10 @@ export interface AgentRegistrationService {
 export interface AgentValidationResponse {
   requestHash?: string;
   validator?: string;
+  agentId?: string;
   score?: number;
+  /** ERC-8004 NewFeedback event-only endpoint field. */
+  endpoint?: string;
   /** ERC-8004 feedback payload URI. Legacy fixtures may still use responseURI. */
   feedbackURI?: string;
   /** Expected SHA-256 digest for the feedback payload. Legacy fixtures may still use responseHash. */
@@ -122,9 +125,61 @@ export interface AgentValidationResponse {
   responseURI?: string;
   responseHash?: string;
   tag?: string;
+  tag1?: string;
+  tag2?: string;
+  value?: number;
+  valueDecimals?: number;
+  isRevoked?: boolean;
+  feedbackIndex?: number;
+  clientAddress?: string;
   updatedAt?: string;
   blockNumber?: number;
+  logIndex?: number;
   transactionHash?: string;
+}
+
+export interface Erc8004FeedbackEventPointer {
+  eventName: 'NewFeedback';
+  agentId: string | null;
+  clientAddress: string | null;
+  feedbackIndex: number | null;
+  transactionHash: string | null;
+  blockNumber: number | null;
+  logIndex: number | null;
+}
+
+export interface Erc8004FeedbackStorageSnapshot {
+  value: number | null;
+  valueDecimals: number | null;
+  tag1: string | null;
+  tag2: string | null;
+  isRevoked: boolean | null;
+}
+
+export interface Erc8004FeedbackEventStorageVerdictPayload {
+  requestHash: string;
+  validator: string;
+  responseOrder: number;
+  eventPointer: Erc8004FeedbackEventPointer | null;
+  eventFields: {
+    endpoint: string | null;
+    feedbackURI: string | null;
+    feedbackHash: string | null;
+  };
+  storageSnapshot: Erc8004FeedbackStorageSnapshot;
+  verdict: 'complete' | 'incomplete';
+  missingEventFields: string[];
+  missingStorageFields: string[];
+}
+
+export interface Erc8004FeedbackEventStorageCompletenessReceipt {
+  signatureAlgorithm: 'ed25519';
+  canonicalization: 'json-stable-v1';
+  verdictPayload: Erc8004FeedbackEventStorageVerdictPayload;
+  payloadSha256: string;
+  signatureBase64: string;
+  publicKeyBase64: string;
+  signedAt: string;
 }
 
 /** ERC-8004 validation request plus its repeated validator responses. */
@@ -142,12 +197,17 @@ export interface Erc8004ValidationResponseEvidence {
   requestHashMatches: boolean;
   validatorMatchesRequest: boolean;
   score: number | null;
+  endpoint: string | null;
   responseURI: string | null;
   responseHash: string | null;
   responseHashVerified: boolean | null;
   responseHashAlgorithm: 'sha256' | null;
   /** Signed allow/block plus integrity evidence for dereferencing feedbackURI/responseURI. */
   feedbackFetchDecisionReceipt: Erc8004FeedbackFetchDecisionReceipt | null;
+  canonicalEventPointer: Erc8004FeedbackEventPointer | null;
+  storageSnapshot: Erc8004FeedbackStorageSnapshot;
+  /** Signed verdict that NewFeedback event-only fields were reconciled with stored fields. */
+  eventStorageCompletenessVerdict: Erc8004FeedbackEventStorageCompletenessReceipt;
   tag: string | null;
   updatedAt: string | null;
   blockNumber: number | null;
@@ -197,6 +257,7 @@ export interface Erc8004ValidationLineageEvidence {
   latestScore: number | null;
   allResponsesBound: boolean;
   allResponseHashesVerified: boolean;
+  allFeedbackEventStorageComplete: boolean;
   responses: Erc8004ValidationResponseEvidence[];
 }
 

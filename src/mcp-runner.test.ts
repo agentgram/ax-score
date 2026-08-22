@@ -255,9 +255,19 @@ describe('runMcpSweep', () => {
         validator: '0xvalidator',
         validationResponses: [{
           score: 93,
+          endpoint: 'https://mcp.acme.dev/mcp',
           responseURI: `data:text/plain,${encodeURIComponent(responseBody)}`,
           responseHash: createHash('sha256').update(responseBody).digest('hex'),
+          transactionHash: '0xfeedbacktx',
+          blockNumber: 123,
+          logIndex: 4,
+          feedbackIndex: 7,
+          clientAddress: '0xclient',
+          value: 93,
+          valueDecimals: 0,
           tag: 'final',
+          tag2: 'quality',
+          isRevoked: false,
         }],
       }],
     };
@@ -283,6 +293,7 @@ describe('runMcpSweep', () => {
         latestScore: 93,
         allResponsesBound: true,
         allResponseHashesVerified: true,
+        allFeedbackEventStorageComplete: true,
       }),
     ]);
     expect(entry.validationLineage?.[0]?.responses[0]).toMatchObject({
@@ -290,6 +301,9 @@ describe('runMcpSweep', () => {
       requestHashMatches: true,
       validatorMatchesRequest: true,
       responseHashVerified: true,
+      endpoint: 'https://mcp.acme.dev/mcp',
+      canonicalEventPointer: expect.objectContaining({ eventName: 'NewFeedback', transactionHash: '0xfeedbacktx' }),
+      eventStorageCompletenessVerdict: expect.objectContaining({ signatureAlgorithm: 'ed25519' }),
       isLatest: true,
     });
   });
