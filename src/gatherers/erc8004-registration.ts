@@ -6,6 +6,10 @@ import type {
   AgentServiceBindingEvidence,
   AgentValidationRequest,
   AgentValidationResponse,
+  Erc8004FeedbackEventPointer,
+  Erc8004FeedbackEventStorageCompletenessReceipt,
+  Erc8004FeedbackEventStorageVerdictPayload,
+  Erc8004FeedbackStorageSnapshot,
   Erc8004FeedbackFetchDecisionPayload,
   Erc8004FeedbackFetchDecisionReceipt,
   Erc8004FeedbackRedirectEvidence,
@@ -180,14 +184,24 @@ function validationResponseFromRecord(record: Record<string, unknown>): AgentVal
   return {
     requestHash: normalizeString(record['requestHash']),
     validator: normalizeString(record['validator']),
+    agentId: normalizeString(record['agentId']),
     score: normalizeNumber(record['score']),
+    endpoint: normalizeString(record['endpoint']),
     feedbackURI: normalizeString(record['feedbackURI'] ?? record['feedbackUri']),
     feedbackHash: normalizeString(record['feedbackHash']),
     responseURI: normalizeString(record['responseURI'] ?? record['responseUri']),
     responseHash: normalizeString(record['responseHash']),
-    tag: normalizeString(record['tag']),
+    tag: normalizeString(record['tag'] ?? record['tag1']),
+    tag1: normalizeString(record['tag1'] ?? record['tag']),
+    tag2: normalizeString(record['tag2']),
+    value: normalizeNumber(record['value']),
+    valueDecimals: normalizeNumber(record['valueDecimals']),
+    isRevoked: typeof record['isRevoked'] === 'boolean' ? record['isRevoked'] : undefined,
+    feedbackIndex: normalizeNumber(record['feedbackIndex']),
+    clientAddress: normalizeString(record['clientAddress']),
     updatedAt: normalizeString(record['updatedAt']),
     blockNumber: normalizeNumber(record['blockNumber']),
+    logIndex: normalizeNumber(record['logIndex']),
     transactionHash: normalizeString(record['transactionHash']),
   };
 }
@@ -255,6 +269,100 @@ function signFeedbackDecision(payload: Erc8004FeedbackFetchDecisionPayload): Erc
     signature: sign(null, Buffer.from(stableStringify(payload)), privateKey).toString('base64'),
     publicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
   };
+}
+
+function signFeedbackEventStorageCompleteness(
+  payload: Erc8004FeedbackEventStorageVerdictPayload
+): Erc8004FeedbackEventStorageCompletenessReceipt {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const publicKey = createPublicKey(privateKey);
+  const signedAt = new Date().toISOString();
+  const signaturePayload = { ...payload, signedAt };
+  const canonicalPayload = stableStringify(signaturePayload);
+  return {
+    signatureAlgorithm: 'ed25519',
+    canonicalization: 'json-stable-v1',
+    verdictPayload: payload,
+    payloadSha256: createHash('sha256').update(canonicalPayload).digest('hex'),
+    signatureBase64: sign(null, Buffer.from(canonicalPayload), privateKey).toString('base64'),
+    publicKeyBase64: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+    signedAt,
+  };
+}
+
+function canonicalEventPointer(args: {
+  request: AgentValidationRequest;
+  response: AgentValidationResponse;
+}): Erc8004FeedbackEventPointer | null {
+  const feedbackIndex = args.response.feedbackIndex ?? null;
+  const transactionHash = args.response.transactionHash ?? null;
+  const blockNumber = args.response.blockNumber ?? null;
+  const logIndex = args.response.logIndex ?? null;
+  if (feedbackIndex === null || !transactionHash || blockNumber === null || logIndex === null) return null;
+  return {
+    eventName: 'NewFeedback',
+    agentId: args.response.agentId ?? null,
+    clientAddress: args.response.clientAddress ?? null,
+    feedbackIndex,
+    transactionHash,
+    blockNumber,
+    logIndex,
+  };
+}
+
+function storageSnapshot(response: AgentValidationResponse): Erc8004FeedbackStorageSnapshot {
+  return {
+    value: typeof response.value === 'number' && Number.isFinite(response.value) ? response.value : null,
+    valueDecimals: typeof response.valueDecimals === 'number' && Number.isFinite(response.valueDecimals) ? response.valueDecimals : null,
+    tag1: response.tag1 ?? response.tag ?? null,
+    tag2: response.tag2 ?? null,
+    isRevoked: typeof response.isRevoked === 'boolean' ? response.isRevoked : null,
+  };
+}
+
+function feedbackEventStorageVerdict(args: {
+  request: AgentValidationRequest;
+  response: AgentValidationResponse;
+  order: number;
+  feedbackURI: string | undefined;
+  feedbackHash: string | null;
+}): {
+  pointer: Erc8004FeedbackEventPointer | null;
+  snapshot: Erc8004FeedbackStorageSnapshot;
+  receipt: Erc8004FeedbackEventStorageCompletenessReceipt;
+} {
+  const pointer = canonicalEventPointer(args);
+  const snapshot = storageSnapshot(args.response);
+  const eventFields = {
+    endpoint: args.response.endpoint ?? null,
+    feedbackURI: args.feedbackURI ?? null,
+    feedbackHash: args.feedbackHash,
+  };
+  const missingEventFields = [
+    ...(!pointer ? ['canonicalEventPointer'] : []),
+    ...(!eventFields.endpoint ? ['endpoint'] : []),
+    ...(!eventFields.feedbackURI ? ['feedbackURI'] : []),
+    ...(!eventFields.feedbackHash ? ['feedbackHash'] : []),
+  ];
+  const missingStorageFields = [
+    ...(snapshot.value === null ? ['value'] : []),
+    ...(snapshot.valueDecimals === null ? ['valueDecimals'] : []),
+    ...(snapshot.tag1 === null ? ['tag1'] : []),
+    ...(snapshot.tag2 === null ? ['tag2'] : []),
+    ...(snapshot.isRevoked === null ? ['isRevoked'] : []),
+  ];
+  const payload: Erc8004FeedbackEventStorageVerdictPayload = {
+    requestHash: args.request.requestHash ?? '',
+    validator: args.request.validator ?? '',
+    responseOrder: args.order,
+    eventPointer: pointer,
+    eventFields,
+    storageSnapshot: snapshot,
+    verdict: missingEventFields.length === 0 && missingStorageFields.length === 0 ? 'complete' : 'incomplete',
+    missingEventFields,
+    missingStorageFields,
+  };
+  return { pointer, snapshot, receipt: signFeedbackEventStorageCompleteness(payload) };
 }
 
 async function resolveFeedbackHost(hostname: string): Promise<Erc8004FeedbackResolutionEvidence[]> {
@@ -391,6 +499,13 @@ export async function buildProgressiveValidationLineage(args: { validationReques
       const feedbackHash = response.feedbackHash ?? response.responseHash;
       const normalizedResponseHash = normalizeSha256(feedbackHash);
       const verification = await verifyResponseHash(feedbackURI, feedbackHash, args.timeout);
+      const eventStorage = feedbackEventStorageVerdict({
+        request,
+        response,
+        order: index + 1,
+        feedbackURI,
+        feedbackHash: normalizedResponseHash ?? feedbackHash ?? null,
+      });
       return {
         order: index + 1,
         requestHash: responseRequestHash,
@@ -398,11 +513,15 @@ export async function buildProgressiveValidationLineage(args: { validationReques
         requestHashMatches: responseRequestHash === request.requestHash,
         validatorMatchesRequest: responseValidator === request.validator,
         score: typeof response.score === 'number' && Number.isFinite(response.score) ? response.score : null,
+        endpoint: response.endpoint ?? null,
         responseURI: feedbackURI ?? null,
         responseHash: normalizedResponseHash ?? feedbackHash ?? null,
         responseHashVerified: verification.verified,
         responseHashAlgorithm: normalizedResponseHash ? 'sha256' : null,
         feedbackFetchDecisionReceipt: verification.receipt,
+        canonicalEventPointer: eventStorage.pointer,
+        storageSnapshot: eventStorage.snapshot,
+        eventStorageCompletenessVerdict: eventStorage.receipt,
         tag: response.tag ?? null,
         updatedAt: response.updatedAt ?? null,
         blockNumber: response.blockNumber ?? null,
@@ -420,6 +539,7 @@ export async function buildProgressiveValidationLineage(args: { validationReques
       latestScore: latest?.score ?? null,
       allResponsesBound: responses.length > 0 && responses.every((response) => response.requestHashMatches && response.validatorMatchesRequest),
       allResponseHashesVerified: responses.length > 0 && responses.every((response) => response.responseHashVerified === true),
+      allFeedbackEventStorageComplete: responses.length > 0 && responses.every((response) => response.eventStorageCompletenessVerdict.verdictPayload.verdict === 'complete'),
       responses,
     }];
   }));

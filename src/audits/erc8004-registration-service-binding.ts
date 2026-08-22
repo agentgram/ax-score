@@ -46,6 +46,7 @@ export class Erc8004RegistrationBindingAudit extends McpBaseAudit {
       latestScore: lineage.latestScore,
       allResponsesBound: lineage.allResponsesBound,
       allResponseHashesVerified: lineage.allResponseHashesVerified,
+      allFeedbackEventStorageComplete: lineage.allFeedbackEventStorageComplete,
       responses: lineage.responses,
     }));
     const identityItems = registration.identity ? [{
@@ -54,10 +55,10 @@ export class Erc8004RegistrationBindingAudit extends McpBaseAudit {
       keyContinuityReceipts: registration.keyContinuityReceipts,
     }] : [];
     const verified = bindings.filter((binding) => binding.tls && binding.signatureAlgorithm === 'ed25519' && (binding.domainControl === 'same-host' || binding.domainControl === 'same-registrable-domain'));
-    const verifiedLineage = validationLineage.filter((lineage) => lineage.allResponsesBound && lineage.allResponseHashesVerified);
+    const verifiedLineage = validationLineage.filter((lineage) => lineage.allResponsesBound && lineage.allResponseHashesVerified && lineage.allFeedbackEventStorageComplete);
     const evaluableGroups = (bindings.length > 0 ? 1 : 0) + (validationLineage.length > 0 ? 1 : 0);
     const score = ((bindings.length > 0 ? verified.length / bindings.length : 0) + (validationLineage.length > 0 ? verifiedLineage.length / validationLineage.length : 0)) / evaluableGroups;
-    const summary = `${verified.length}/${bindings.length} ERC-8004 A2A/MCP service bindings carry TLS, domain-control, redirect, and Ed25519 evidence. ${verifiedLineage.length}/${validationLineage.length} validation request lineage receipts bind every response to requestHash/original validator, verify responseURI content against responseHash, and export response order, tags, and latest state.`;
+    const summary = `${verified.length}/${bindings.length} ERC-8004 A2A/MCP service bindings carry TLS, domain-control, redirect, and Ed25519 evidence. ${verifiedLineage.length}/${validationLineage.length} validation request lineage receipts bind every response to requestHash/original validator, verify responseURI content against responseHash, reconcile NewFeedback event-only endpoint/feedbackURI/feedbackHash with stored value/tag/revocation fields, and export response order, tags, latest state, canonical event pointers, and signed completeness verdicts.`;
     const allItems = [...items, ...validationLineageItems, ...identityItems];
     if (score >= 1) return this.pass({ type: 'table', items: allItems, summary });
     if (score <= 0) return this.fail({ type: 'table', items: allItems, summary });
