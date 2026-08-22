@@ -209,6 +209,8 @@ When the registration file also advertises ERC-8004 progressive validation reque
 
 Remote reachability and TLS audit details also include DNS resolution policy, redirect-chain, and fetch-decision receipt fields. This keeps MCP sweep results auditable without silently penalizing servers that have not adopted ERC-8004 metadata yet.
 
+When a Registry record declares multiple hosted MCP remotes, AX Score also sends the same `initialize` request to each reachable endpoint and signs an `mcp-remote-semantic-v1` consistency receipt. The `mcp-remote-semantic-consistency` audit records whether the remotes returned matching server identity, protocol version, and capability digest evidence. Missing initialize evidence is treated as insufficient evidence rather than a failure; conflicting successful initialize responses are reported as divergence and lower exported reputation confidence to `0.6`.
+
 When `mcp-report` compares a current report with `--diff-from`, the manifest also includes an `agentUriLineage` diff array for servers whose `agentURI` or registration hash changed. Each lineage record carries the previous/current registration evidence, the transition type (`agent-uri-changed` or `registration-hash-changed`), and `reputationWeightRetained`, which is true only after the current A2A/MCP service bindings were re-attested.
 
 For ERC-8004 Ed25519 key rotations, diff output also records identity continuity decisions. The current registration can export `keyContinuityReceipts`, `continuityReceipts`, or `keyRotationReceipts`; AX Score verifies signed `old-to-new-continuity` or `explicit-revocation` receipts before retaining reputation across a key change. Missing or invalid continuity evidence is reported as `missing-continuity` so downstream reputation consumers can quarantine the transition instead of silently carrying trust forward.
@@ -218,7 +220,7 @@ For ERC-8004 Ed25519 key rotations, diff output also records identity continuity
 - **Text heuristics are gameable.** Description quality, README size, and usage-instruction detection are length- and keyword-based; a publisher can satisfy them with boilerplate. Treat high Metadata/Documentation scores as necessary-but-not-sufficient signals. Planned v2 corroboration: cross-checking the README against the declared tool surface, verifying config snippets actually reference the published package, and sampling tool descriptions via a live MCP handshake.
 - **Popularity and activity are proxies.** Stars and `pushed_at` indicate attention, not correctness or safety; a starless new server is not defective (it floors at a low partial score, never 0).
 - **`oci`/`mcpb`/`nuget` packages are not verified** and report as indeterminate; only npm and PyPI are checked in v1.
-- **Remote probing is shallow.** Reachability/TLS checks prove the endpoint answers HTTP; they do not perform an MCP initialize handshake (planned for v2).
+- **Remote probing remains bounded.** Reachability/TLS checks prove the endpoint answers HTTP, and hosted remotes with comparable `initialize` responses are checked for semantic consistency; AX Score does not perform full tool invocation, authentication flow, or long-running session validation in v1.
 - **Non-GitHub repositories** (GitLab, Bitbucket, self-hosted) are reported as indeterminate for provenance and documentation audits.
 
 ### Programmatic MCP Usage
