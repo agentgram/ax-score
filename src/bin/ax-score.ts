@@ -54,6 +54,10 @@ interface McpReportCliOptions {
   manifestOutput?: string;
   diffFrom?: string;
   publishedBaseUrl?: string;
+  x402OfferDescription?: string;
+  x402Route?: string;
+  x402SettlementReceipt?: string;
+  x402DeliveryUrl?: string;
 }
 
 const DEFAULT_API_URL = 'https://agentgram.co/api/v1/ax-score/scan';
@@ -66,6 +70,14 @@ function readResumeReport(path: string): McpSweepReport | undefined {
     throw new Error(`Resume report ${path} does not contain an entries array.`);
   }
   return parsed as McpSweepReport;
+}
+
+function parseJsonOrString(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }
 
 const program = new Command();
@@ -281,6 +293,13 @@ program
   .option('--manifest-output <file>', 'Path for a scheduled artifact manifest JSON file')
   .option('--diff-from <file>', 'Previous JSON report to compare against for historical diffs')
   .option('--published-base-url <url>', 'Hosted base URL where report artifacts will be published')
+  .option('--x402-offer-description <text>', 'HTTP 402 paid AX Report offer description to bind into the receipt')
+  .option('--x402-route <route>', 'Paid route whose successful retry delivers the AX Report')
+  .option(
+    '--x402-settlement-receipt <json-or-text>',
+    'x402 facilitator/merchant settlement receipt JSON or receipt id to bind into the receipt'
+  )
+  .option('--x402-delivery-url <url>', 'Durable paid delivery URL; defaults to the hosted JSON report URL')
   .action(async (options: McpReportCliOptions) => {
     const timeout = parseInt(options.timeout, 10);
     const spinner = ora(`Auditing ${options.limit} MCP Registry servers...`).start();
@@ -307,6 +326,20 @@ program
       );
 
       spinner.stop();
+      const hasAnyX402Option = Boolean(
+        options.x402OfferDescription ||
+          options.x402Route ||
+          options.x402SettlementReceipt ||
+          options.x402DeliveryUrl
+      );
+      if (
+        hasAnyX402Option &&
+        (!options.x402OfferDescription || !options.x402Route || !options.x402SettlementReceipt)
+      ) {
+        throw new Error(
+          'x402 paid AX Report receipts require --x402-offer-description, --x402-route, and --x402-settlement-receipt.'
+        );
+      }
       writeMcpReportFiles(report, {
         json: options.jsonOutput,
         markdown: options.markdownOutput,
@@ -314,6 +347,16 @@ program
       }, {
         previousReport,
         publishedBaseUrl: options.publishedBaseUrl,
+        ...(hasAnyX402Option
+          ? {
+              x402PaidReportOffer: {
+                offerDescription: options.x402OfferDescription!,
+                route: options.x402Route!,
+                settlementReceipt: parseJsonOrString(options.x402SettlementReceipt!),
+                ...(options.x402DeliveryUrl ? { deliveryUrl: options.x402DeliveryUrl } : {}),
+              },
+            }
+          : {}),
       });
 
       console.log(renderMcpLeaderboard(report));

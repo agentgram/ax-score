@@ -123,10 +123,11 @@ describe('writeMcpReportFiles', () => {
 
   it('writes scheduled artifact manifests with hosted links and historical diffs', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ax-score-mcp-report-'));
+    const report = makeReport();
 
     try {
       const paths = writeMcpReportFiles(
-        makeReport(),
+        report,
         {
           json: join(dir, 'reports', 'mcp-report.json'),
           markdown: join(dir, 'reports', 'mcp-report.md'),
@@ -135,6 +136,16 @@ describe('writeMcpReportFiles', () => {
         {
           previousReport: makePreviousReport(),
           publishedBaseUrl: 'https://ax-score.example/reports',
+          x402PaidReportOffer: {
+            offerDescription: 'Paid AX Report for io.github.acme/todo-server',
+            route: 'GET /reports/mcp-report.json',
+            settlementReceipt: {
+              network: 'base-sepolia',
+              txHash: '0xsettled',
+              amount: '0.50',
+              asset: 'USDC',
+            },
+          },
         }
       );
 
@@ -155,6 +166,60 @@ describe('writeMcpReportFiles', () => {
       );
       expect(manifest.diff?.removedServers).toEqual(['io.github.acme/removed-server']);
       expect(manifest.diff?.scoreChanges[0]?.delta).toBe(5);
+      expect(markdown).toContain('## x402 paid AX Report receipt');
+      expect(markdown).toContain('GET /reports/mcp-report.json');
+      expect(manifest.x402PaidAxReportReceipt).toMatchObject({
+        signatureAlgorithm: 'ed25519',
+        canonicalization: 'json-stable-v1',
+        payload: expect.objectContaining({
+          offerDescription: 'Paid AX Report for io.github.acme/todo-server',
+          route: 'GET /reports/mcp-report.json',
+          contentDigestSha256: createHash('sha256')
+            .update(JSON.stringify(report, null, 2))
+            .digest('hex'),
+          deliveryUrl: 'https://ax-score.example/reports/mcp-report.json',
+        }),
+      });
+      expect(manifest.x402PaidAxReportReceipt?.payload.settlementReceiptSha256).toBe(
+        createHash('sha256')
+          .update(
+            stableJson({
+              network: 'base-sepolia',
+              txHash: '0xsettled',
+              amount: '0.50',
+              asset: 'USDC',
+            })
+          )
+          .digest('hex')
+      );
+      expect(manifest.x402PaidAxReportReceipt?.payloadSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(manifest.x402PaidAxReportReceipt?.publicKeyBase64).toMatch(/^MCowBQYDK2VwAyEA/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects x402 receipt generation without a durable delivery URL', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ax-score-mcp-report-'));
+
+    try {
+      expect(() =>
+        writeMcpReportFiles(
+          makeReport(),
+          {
+            json: join(dir, 'report.json'),
+            markdown: join(dir, 'report.md'),
+            manifest: join(dir, 'manifest.json'),
+          },
+          {
+            x402PaidReportOffer: {
+              offerDescription: 'Paid AX Report',
+              route: 'GET /reports/mcp-report.json',
+              settlementReceipt: 'receipt-id',
+            },
+          }
+        )
+      ).toThrow('durable delivery URL');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
