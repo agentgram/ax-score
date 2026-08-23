@@ -646,6 +646,38 @@ export interface McpReportPublishedUrls {
   manifest?: string;
 }
 
+export interface McpX402PaidAxReportOffer {
+  /** Human-readable HTTP 402 offer text shown before payment. */
+  offerDescription: string;
+  /** Paid route whose successful retry delivers the AX Report artifact. */
+  route: string;
+  /** Settlement receipt returned by the x402 facilitator or merchant ledger. */
+  settlementReceipt: unknown;
+  /** Durable report URL delivered after payment; defaults to hosted JSON report URL. */
+  deliveryUrl?: string;
+}
+
+export interface McpX402PaidAxReportReceiptPayload {
+  offerDescription: string;
+  route: string;
+  contentDigestSha256: string;
+  settlementReceipt: unknown;
+  settlementReceiptSha256: string;
+  deliveryUrl: string;
+  reportTimestamp: string;
+  axScoreVersion: string;
+}
+
+export interface McpX402PaidAxReportReceipt {
+  signatureAlgorithm: 'ed25519';
+  canonicalization: 'json-stable-v1';
+  payload: McpX402PaidAxReportReceiptPayload;
+  payloadSha256: string;
+  signatureBase64: string;
+  publicKeyBase64: string;
+  signedAt: string;
+}
+
 export interface McpReportArtifactManifest {
   generatedAt: string;
   registryUrl: string;
@@ -657,4 +689,5 @@ export interface McpReportArtifactManifest {
   };
   hostedUrls?: McpReportPublishedUrls;
   diff?: McpSweepDiff;
+  x402PaidAxReportReceipt?: McpX402PaidAxReportReceipt;
 }

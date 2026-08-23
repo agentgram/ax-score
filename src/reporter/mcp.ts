@@ -5,6 +5,7 @@ import type {
   McpReportPublishedUrls,
   McpSweepDiff,
   McpSweepReport,
+  McpX402PaidAxReportReceipt,
 } from '../types.js';
 import { MCP_CATEGORIES } from '../config/mcp.js';
 
@@ -114,6 +115,7 @@ function formatSignedNumber(value: number): string {
 export interface McpLeaderboardRenderOptions {
   diff?: McpSweepDiff;
   hostedUrls?: McpReportPublishedUrls;
+  x402PaidAxReportReceipt?: McpX402PaidAxReportReceipt;
 }
 
 /**
@@ -142,6 +144,19 @@ export function renderMcpLeaderboard(
     for (const [label, url] of hostedLinks) {
       lines.push(`- ${label}: ${url}`);
     }
+    lines.push('');
+  }
+
+  if (options.x402PaidAxReportReceipt) {
+    const receipt = options.x402PaidAxReportReceipt;
+    lines.push('## x402 paid AX Report receipt');
+    lines.push('');
+    lines.push(`- offer: ${escapeMarkdown(receipt.payload.offerDescription)}`);
+    lines.push(`- route: ${escapeMarkdown(receipt.payload.route)}`);
+    lines.push(`- content digest: ${receipt.payload.contentDigestSha256}`);
+    lines.push(`- settlement receipt digest: ${receipt.payload.settlementReceiptSha256}`);
+    lines.push(`- delivery URL: ${receipt.payload.deliveryUrl}`);
+    lines.push(`- Ed25519 payload signature: ${receipt.payloadSha256}`);
     lines.push('');
   }
 

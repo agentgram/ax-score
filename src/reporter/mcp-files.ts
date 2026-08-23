@@ -14,6 +14,8 @@ import type {
   McpSweepDiff,
   McpSweepEntry,
   McpSweepReport,
+  McpX402PaidAxReportOffer,
+  McpX402PaidAxReportReceipt,
 } from '../types.js';
 import { renderJSON } from './json.js';
 import { renderMcpLeaderboard } from './mcp.js';
@@ -27,6 +29,7 @@ export interface McpReportFilePaths {
 export interface McpReportFileOptions {
   previousReport?: McpSweepReport;
   publishedBaseUrl?: string;
+  x402PaidReportOffer?: McpX402PaidAxReportOffer;
 }
 
 function writeTextFile(path: string, content: string): void {
@@ -67,6 +70,48 @@ function stableJson(value: unknown): string {
 
 function sha256(value: unknown): string {
   return createHash('sha256').update(stableJson(value)).digest('hex');
+}
+
+function sha256Text(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function signX402PaidAxReportReceipt(args: {
+  report: McpSweepReport;
+  renderedJson: string;
+  offer: McpX402PaidAxReportOffer;
+  hostedUrls?: McpReportPublishedUrls;
+}): McpX402PaidAxReportReceipt {
+  const deliveryUrl = args.offer.deliveryUrl ?? args.hostedUrls?.json;
+  if (!deliveryUrl) {
+    throw new Error(
+      'x402 paid AX Report receipts require a durable delivery URL; provide publishedBaseUrl or offer.deliveryUrl.'
+    );
+  }
+
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const publicKey = createPublicKey(privateKey);
+  const payload = {
+    offerDescription: args.offer.offerDescription,
+    route: args.offer.route,
+    contentDigestSha256: sha256Text(args.renderedJson),
+    settlementReceipt: args.offer.settlementReceipt,
+    settlementReceiptSha256: sha256(args.offer.settlementReceipt),
+    deliveryUrl,
+    reportTimestamp: args.report.timestamp,
+    axScoreVersion: args.report.version,
+  };
+  const canonicalPayload = stableJson(payload);
+
+  return {
+    signatureAlgorithm: 'ed25519',
+    canonicalization: 'json-stable-v1',
+    payload,
+    payloadSha256: sha256(payload),
+    signatureBase64: sign(null, Buffer.from(canonicalPayload), privateKey).toString('base64'),
+    publicKeyBase64: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+    signedAt: new Date().toISOString(),
+  };
 }
 
 function signSemanticVersionReceipt(
@@ -463,8 +508,17 @@ export function writeMcpReportFiles(
 ): McpReportFilePaths {
   const diff = options.previousReport ? diffMcpSweepReports(report, options.previousReport) : undefined;
   const hostedUrls = buildHostedUrls(paths, options.publishedBaseUrl);
-  writeTextFile(paths.json, renderJSON(report));
-  writeTextFile(paths.markdown, renderMcpLeaderboard(report, { diff, hostedUrls }));
+  const renderedJson = renderJSON(report);
+  const x402PaidAxReportReceipt = options.x402PaidReportOffer
+    ? signX402PaidAxReportReceipt({
+        report,
+        renderedJson,
+        offer: options.x402PaidReportOffer,
+        hostedUrls,
+      })
+    : undefined;
+  writeTextFile(paths.json, renderedJson);
+  writeTextFile(paths.markdown, renderMcpLeaderboard(report, { diff, hostedUrls, x402PaidAxReportReceipt }));
   if (paths.manifest) {
     const manifest: McpReportArtifactManifest = {
       generatedAt: new Date().toISOString(),
@@ -477,6 +531,7 @@ export function writeMcpReportFiles(
       },
       ...(hostedUrls ? { hostedUrls } : {}),
       ...(diff ? { diff } : {}),
+      ...(x402PaidAxReportReceipt ? { x402PaidAxReportReceipt } : {}),
     };
     writeTextFile(paths.manifest, renderJSON(manifest));
   }

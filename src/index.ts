@@ -33,6 +33,8 @@ export type {
   AgentRegistrationService,
   Erc8004AgentIdentityRef,
   AgentServiceBindingEvidence,
+  McpX402PaidAxReportOffer,
+  McpX402PaidAxReportReceipt,
 } from './types.js';
 
 // Base classes (for extensibility)
