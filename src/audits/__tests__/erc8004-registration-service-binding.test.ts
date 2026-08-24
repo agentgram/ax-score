@@ -72,6 +72,8 @@ describe('buildProgressiveValidationLineage', () => {
           validator: '0xvalidator',
           validationResponses: [
             {
+              requestHash: '0xrequest',
+              validator: '0xvalidator',
               score: 60,
               responseURI: `data:text/plain,${encodeURIComponent(firstPayload)}`,
               responseHash: createHash('sha256').update(firstPayload).digest('hex'),
@@ -133,16 +135,101 @@ describe('buildProgressiveValidationLineage', () => {
       validator: '0xvalidator',
       allResponsesBound: false,
       allResponseHashesVerified: false,
-      latestTag: 'final',
-      latestScore: 100,
+      latestTag: null,
+      latestScore: null,
     });
     expect(lineage[0]!.responses[0]).toMatchObject({
       requestHash: '0xother',
       validator: '0xattacker',
       requestHashMatches: false,
       validatorMatchesRequest: false,
-      responseHashVerified: false,
+      includedInSignedEvidence: false,
+      responseHashVerified: null,
+      feedbackFetchDecisionReceipt: null,
+      eventStorageCompletenessVerdict: null,
     });
+  });
+
+  it('excludes unassigned or mismatched validation responses from signed AX Score evidence', async () => {
+    const trustedPayload = 'trusted validator evidence';
+    const attackerPayload = 'attacker evidence should not be fetched or signed';
+    const lineage = await buildProgressiveValidationLineage({
+      validationRequests: [
+        {
+          requestHash: '0xrequest',
+          validator: '0xvalidator',
+          agentId: 'agent-7',
+          validationResponses: [
+            {
+              requestHash: '0xrequest',
+              validator: '0xvalidator',
+              agentId: 'agent-7',
+              score: 91,
+              feedbackURI: `data:text/plain,${encodeURIComponent(trustedPayload)}`,
+              feedbackHash: createHash('sha256').update(trustedPayload).digest('hex'),
+              tag: 'trusted',
+            },
+            {
+              requestHash: '0xrequest',
+              validator: '0xattacker',
+              agentId: 'agent-7',
+              score: 100,
+              feedbackURI: `data:text/plain,${encodeURIComponent(attackerPayload)}`,
+              feedbackHash: createHash('sha256').update(attackerPayload).digest('hex'),
+              tag: 'attacker',
+            },
+            {
+              requestHash: '0xrequest',
+              agentId: 'agent-7',
+              score: 98,
+              feedbackURI: `data:text/plain,${encodeURIComponent(attackerPayload)}`,
+              feedbackHash: createHash('sha256').update(attackerPayload).digest('hex'),
+              tag: 'unassigned',
+            },
+          ],
+        },
+      ],
+      timeout: 100,
+    });
+
+    expect(lineage[0]).toMatchObject({
+      requestHash: '0xrequest',
+      validator: '0xvalidator',
+      agentId: 'agent-7',
+      responseCount: 3,
+      acceptedResponseCount: 1,
+      orderedTags: ['trusted'],
+      latestTag: 'trusted',
+      latestScore: 91,
+      allResponsesBound: false,
+      allResponseHashesVerified: true,
+    });
+    expect(lineage[0]!.responses[0]).toMatchObject({
+      validatorMatchesRequest: true,
+      agentIdMatchesRequest: true,
+      includedInSignedEvidence: true,
+      responseHashVerified: true,
+      feedbackFetchDecisionReceipt: expect.objectContaining({ signatureAlgorithm: 'ed25519' }),
+      eventStorageCompletenessVerdict: expect.objectContaining({ signatureAlgorithm: 'ed25519' }),
+    });
+    expect(lineage[0]!.responses.slice(1)).toEqual([
+      expect.objectContaining({
+        validator: '0xattacker',
+        validatorMatchesRequest: false,
+        includedInSignedEvidence: false,
+        responseHashVerified: null,
+        feedbackFetchDecisionReceipt: null,
+        eventStorageCompletenessVerdict: null,
+      }),
+      expect.objectContaining({
+        validator: null,
+        validatorMatchesRequest: false,
+        includedInSignedEvidence: false,
+        responseHashVerified: null,
+        feedbackFetchDecisionReceipt: null,
+        eventStorageCompletenessVerdict: null,
+      }),
+    ]);
   });
 
   it('requires feedbackURI fetch receipts and feedbackHash integrity before scoring validation lineage', async () => {
@@ -154,6 +241,8 @@ describe('buildProgressiveValidationLineage', () => {
           validator: '0xvalidator',
           validationResponses: [
             {
+              requestHash: '0xrequest',
+              validator: '0xvalidator',
               score: 88,
               feedbackURI: `data:text/plain,${encodeURIComponent(payload)}`,
               feedbackHash: createHash('sha256').update(payload).digest('hex'),
@@ -195,6 +284,8 @@ describe('buildProgressiveValidationLineage', () => {
           validator: '0xvalidator',
           validationResponses: [
             {
+              requestHash: '0xrequest',
+              validator: '0xvalidator',
               score: 88,
               endpoint: 'https://mcp.acme.dev/mcp',
               feedbackURI: `data:text/plain,${encodeURIComponent(payload)}`,
@@ -257,6 +348,8 @@ describe('buildProgressiveValidationLineage', () => {
           validator: '0xvalidator',
           validationResponses: [
             {
+              requestHash: '0xrequest',
+              validator: '0xvalidator',
               score: 88,
               responseHash: createHash('sha256').update('missing event payload').digest('hex'),
               tag: 'final',
@@ -291,6 +384,8 @@ describe('buildProgressiveValidationLineage', () => {
           validator: '0xvalidator',
           validationResponses: [
             {
+              requestHash: '0xrequest',
+              validator: '0xvalidator',
               score: 99,
               feedbackURI: 'https://127.0.0.1/internal-feedback',
               feedbackHash: createHash('sha256').update('internal').digest('hex'),
@@ -346,6 +441,8 @@ describe('Erc8004RegistrationBindingAudit', () => {
         requestHash: '0xrequest',
         validator: '0xvalidator',
         validationResponses: [{
+          requestHash: '0xrequest',
+          validator: '0xvalidator',
           score: 91,
           endpoint: 'https://mcp.acme.dev/mcp',
           responseURI: `data:text/plain,${encodeURIComponent(payload)}`,

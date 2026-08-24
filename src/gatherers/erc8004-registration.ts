@@ -222,6 +222,7 @@ function validationRequests(document: unknown): AgentValidationRequest[] {
       return {
         requestHash: normalizeString(request['requestHash']),
         validator: normalizeString(request['validator']),
+        agentId: normalizeString(request['agentId']),
         validationResponses: responses,
       };
     });
@@ -493,25 +494,44 @@ export async function buildProgressiveValidationLineage(args: { validationReques
     if (!request.requestHash || !request.validator) return [];
     const sourceResponses = request.validationResponses ?? request.responses ?? [];
     const responses: Erc8004ValidationResponseEvidence[] = await Promise.all(sourceResponses.map(async (response, index) => {
-      const responseRequestHash = response.requestHash ?? request.requestHash ?? null;
-      const responseValidator = response.validator ?? request.validator ?? null;
+      const responseRequestHash = response.requestHash ?? null;
+      const responseValidator = response.validator ?? null;
+      const responseAgentId = response.agentId ?? null;
       const feedbackURI = response.feedbackURI ?? response.responseURI;
       const feedbackHash = response.feedbackHash ?? response.responseHash;
       const normalizedResponseHash = normalizeSha256(feedbackHash);
-      const verification = await verifyResponseHash(feedbackURI, feedbackHash, args.timeout);
-      const eventStorage = feedbackEventStorageVerdict({
-        request,
-        response,
-        order: index + 1,
-        feedbackURI,
-        feedbackHash: normalizedResponseHash ?? feedbackHash ?? null,
-      });
+      const requestHashMatches = responseRequestHash === request.requestHash;
+      const validatorMatchesRequest = responseValidator === request.validator;
+      const agentIdMatchesRequest = request.agentId ? responseAgentId === request.agentId : true;
+      const includedInSignedEvidence = requestHashMatches && validatorMatchesRequest && agentIdMatchesRequest;
+      const verification = includedInSignedEvidence
+        ? await verifyResponseHash(feedbackURI, feedbackHash, args.timeout)
+        : { verified: null, receipt: null };
+      const eventStorage = includedInSignedEvidence
+        ? feedbackEventStorageVerdict({
+            request,
+            response,
+            order: index + 1,
+            feedbackURI,
+            feedbackHash: normalizedResponseHash ?? feedbackHash ?? null,
+          })
+        : { pointer: null, snapshot: storageSnapshot(response), receipt: null };
       return {
         order: index + 1,
         requestHash: responseRequestHash,
         validator: responseValidator,
-        requestHashMatches: responseRequestHash === request.requestHash,
-        validatorMatchesRequest: responseValidator === request.validator,
+        agentId: responseAgentId,
+        requestHashMatches,
+        validatorMatchesRequest,
+        agentIdMatchesRequest,
+        includedInSignedEvidence,
+        exclusionReason: includedInSignedEvidence
+          ? null
+          : [
+              ...(!requestHashMatches ? ['requestHash mismatch or missing'] : []),
+              ...(!validatorMatchesRequest ? ['validator mismatch or missing'] : []),
+              ...(!agentIdMatchesRequest ? ['agentId mismatch or missing'] : []),
+            ].join('; '),
         score: typeof response.score === 'number' && Number.isFinite(response.score) ? response.score : null,
         endpoint: response.endpoint ?? null,
         responseURI: feedbackURI ?? null,
@@ -529,17 +549,20 @@ export async function buildProgressiveValidationLineage(args: { validationReques
         isLatest: index === sourceResponses.length - 1,
       };
     }));
-    const latest = responses.at(-1);
+    const acceptedResponses = responses.filter((response) => response.includedInSignedEvidence);
+    const latest = acceptedResponses.at(-1);
     return [{
       requestHash: request.requestHash,
       validator: request.validator,
+      agentId: request.agentId ?? null,
       responseCount: responses.length,
-      orderedTags: responses.map((response) => response.tag).filter((tag): tag is string => typeof tag === 'string'),
+      acceptedResponseCount: acceptedResponses.length,
+      orderedTags: acceptedResponses.map((response) => response.tag).filter((tag): tag is string => typeof tag === 'string'),
       latestTag: latest?.tag ?? null,
       latestScore: latest?.score ?? null,
-      allResponsesBound: responses.length > 0 && responses.every((response) => response.requestHashMatches && response.validatorMatchesRequest),
-      allResponseHashesVerified: responses.length > 0 && responses.every((response) => response.responseHashVerified === true),
-      allFeedbackEventStorageComplete: responses.length > 0 && responses.every((response) => response.eventStorageCompletenessVerdict.verdictPayload.verdict === 'complete'),
+      allResponsesBound: responses.length > 0 && responses.every((response) => response.includedInSignedEvidence),
+      allResponseHashesVerified: acceptedResponses.length > 0 && acceptedResponses.every((response) => response.responseHashVerified === true),
+      allFeedbackEventStorageComplete: acceptedResponses.length > 0 && acceptedResponses.every((response) => response.eventStorageCompletenessVerdict?.verdictPayload.verdict === 'complete'),
       responses,
     }];
   }));
