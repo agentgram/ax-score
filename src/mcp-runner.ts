@@ -466,7 +466,9 @@ function entryFromMcpReport(report: McpReport, record: McpRegistryRecord): McpSw
     .map((item) => ({
       requestHash: item['requestHash'],
       validator: item['validator'],
+      agentId: item['agentId'],
       responseCount: item['responseCount'],
+      acceptedResponseCount: item['acceptedResponseCount'],
       orderedTags: item['orderedTags'],
       latestTag: item['latestTag'],
       latestScore: item['latestScore'],
@@ -478,7 +480,9 @@ function entryFromMcpReport(report: McpReport, record: McpRegistryRecord): McpSw
     .filter((item): item is Erc8004ValidationLineageEvidence =>
       typeof item.requestHash === 'string' &&
       typeof item.validator === 'string' &&
+      (typeof item.agentId === 'string' || item.agentId === null) &&
       typeof item.responseCount === 'number' &&
+      typeof item.acceptedResponseCount === 'number' &&
       Array.isArray(item.orderedTags) &&
       typeof item.allResponsesBound === 'boolean' &&
       typeof item.allResponseHashesVerified === 'boolean' &&

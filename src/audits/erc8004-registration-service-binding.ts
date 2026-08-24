@@ -40,7 +40,9 @@ export class Erc8004RegistrationBindingAudit extends McpBaseAudit {
       kind: 'erc8004-validation-lineage',
       requestHash: lineage.requestHash,
       validator: lineage.validator,
+      agentId: lineage.agentId,
       responseCount: lineage.responseCount,
+      acceptedResponseCount: lineage.acceptedResponseCount,
       orderedTags: lineage.orderedTags,
       latestTag: lineage.latestTag,
       latestScore: lineage.latestScore,
@@ -58,7 +60,7 @@ export class Erc8004RegistrationBindingAudit extends McpBaseAudit {
     const verifiedLineage = validationLineage.filter((lineage) => lineage.allResponsesBound && lineage.allResponseHashesVerified && lineage.allFeedbackEventStorageComplete);
     const evaluableGroups = (bindings.length > 0 ? 1 : 0) + (validationLineage.length > 0 ? 1 : 0);
     const score = ((bindings.length > 0 ? verified.length / bindings.length : 0) + (validationLineage.length > 0 ? verifiedLineage.length / validationLineage.length : 0)) / evaluableGroups;
-    const summary = `${verified.length}/${bindings.length} ERC-8004 A2A/MCP service bindings carry TLS, domain-control, redirect, and Ed25519 evidence. ${verifiedLineage.length}/${validationLineage.length} validation request lineage receipts bind every response to requestHash/original validator, verify responseURI content against responseHash, reconcile NewFeedback event-only endpoint/feedbackURI/feedbackHash with stored value/tag/revocation fields, and export response order, tags, latest state, canonical event pointers, and signed completeness verdicts.`;
+    const summary = `${verified.length}/${bindings.length} ERC-8004 A2A/MCP service bindings carry TLS, domain-control, redirect, and Ed25519 evidence. ${verifiedLineage.length}/${validationLineage.length} validation request lineage receipts bind every response to requestHash/original validator/agentId plus responseURI/responseHash, exclude unassigned or mismatched responses from signed AX Score evidence, reconcile NewFeedback event-only endpoint/feedbackURI/feedbackHash with stored value/tag/revocation fields, and export response order, tags, latest state, canonical event pointers, and signed completeness verdicts.`;
     const allItems = [...items, ...validationLineageItems, ...identityItems];
     if (score >= 1) return this.pass({ type: 'table', items: allItems, summary });
     if (score <= 0) return this.fail({ type: 'table', items: allItems, summary });

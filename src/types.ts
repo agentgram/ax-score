@@ -186,6 +186,7 @@ export interface Erc8004FeedbackEventStorageCompletenessReceipt {
 export interface AgentValidationRequest {
   requestHash?: string;
   validator?: string;
+  agentId?: string;
   validationResponses?: AgentValidationResponse[];
   responses?: AgentValidationResponse[];
 }
@@ -194,8 +195,12 @@ export interface Erc8004ValidationResponseEvidence {
   order: number;
   requestHash: string | null;
   validator: string | null;
+  agentId: string | null;
   requestHashMatches: boolean;
   validatorMatchesRequest: boolean;
+  agentIdMatchesRequest: boolean;
+  includedInSignedEvidence: boolean;
+  exclusionReason: string | null;
   score: number | null;
   endpoint: string | null;
   responseURI: string | null;
@@ -207,7 +212,7 @@ export interface Erc8004ValidationResponseEvidence {
   canonicalEventPointer: Erc8004FeedbackEventPointer | null;
   storageSnapshot: Erc8004FeedbackStorageSnapshot;
   /** Signed verdict that NewFeedback event-only fields were reconciled with stored fields. */
-  eventStorageCompletenessVerdict: Erc8004FeedbackEventStorageCompletenessReceipt;
+  eventStorageCompletenessVerdict: Erc8004FeedbackEventStorageCompletenessReceipt | null;
   tag: string | null;
   updatedAt: string | null;
   blockNumber: number | null;
@@ -251,7 +256,9 @@ export interface Erc8004FeedbackFetchDecisionReceipt {
 export interface Erc8004ValidationLineageEvidence {
   requestHash: string;
   validator: string;
+  agentId: string | null;
   responseCount: number;
+  acceptedResponseCount: number;
   orderedTags: string[];
   latestTag: string | null;
   latestScore: number | null;

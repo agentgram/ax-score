@@ -254,6 +254,8 @@ describe('runMcpSweep', () => {
         requestHash: '0xrequest',
         validator: '0xvalidator',
         validationResponses: [{
+          requestHash: '0xrequest',
+          validator: '0xvalidator',
           score: 93,
           endpoint: 'https://mcp.acme.dev/mcp',
           responseURI: `data:text/plain,${encodeURIComponent(responseBody)}`,
@@ -288,6 +290,7 @@ describe('runMcpSweep', () => {
       expect.objectContaining({
         requestHash: '0xrequest',
         validator: '0xvalidator',
+        agentId: null,
         orderedTags: ['final'],
         latestTag: 'final',
         latestScore: 93,
@@ -300,6 +303,7 @@ describe('runMcpSweep', () => {
       order: 1,
       requestHashMatches: true,
       validatorMatchesRequest: true,
+      includedInSignedEvidence: true,
       responseHashVerified: true,
       endpoint: 'https://mcp.acme.dev/mcp',
       canonicalEventPointer: expect.objectContaining({ eventName: 'NewFeedback', transactionHash: '0xfeedbacktx' }),
