@@ -181,13 +181,15 @@ The repository also includes a scheduled publishing pipeline at `.github/workflo
     --x402-offer-description <text>
                           HTTP 402 paid AX Report offer description to bind into the receipt
     --x402-route <route>  Paid route whose successful retry delivers the AX Report
-    --x402-settlement-receipt <json-or-text>
-                          x402 facilitator/merchant settlement receipt JSON or receipt id to bind into the receipt
+    --x402-settlement-receipt <json>
+                          Structured x402 facilitator/merchant settlement receipt JSON to bind into the receipt
+    --x402-expected-settlement-provenance-sha256 <hex>
+                          Expected x402 settlement provenance digest; retries fail on facilitator/network/timestamp/outcome drift
     --x402-delivery-url <url>
                           Durable paid delivery URL; defaults to the hosted JSON report URL
 ```
 
-When you pass any x402 paid-delivery option, `mcp-report` requires the offer description, paid route, and settlement receipt together. The generated manifest binds those fields to the hosted report artifact so downstream reputation consumers can verify that a paid AX Report receipt corresponds to the delivered JSON/markdown evidence.
+When you pass any x402 paid-delivery option, `mcp-report` requires the offer description, paid route, and a structured settlement receipt together. The settlement receipt must include facilitator identity (`facilitatorId` or `facilitator.id`), `network`, `verificationTimestamp`, `settlementTimestamp`, and final `outcome` (`settled` or `failed`). The generated manifest binds those fields plus the hosted report artifact so downstream reputation consumers can verify that a paid AX Report receipt corresponds to the delivered JSON/markdown evidence. Pass `--x402-expected-settlement-provenance-sha256` on retries to reject provenance drift before publishing a changed receipt.
 
 **Strongly recommended for sweeps:** set `GITHUB_TOKEN` (any classic or fine-grained token, no scopes needed) to raise the GitHub API rate limit from 60 to 5,000 requests/hour. Without it, unauthenticated sweeps exhaust the quota after ~30 servers; when that happens ax-score shares the rate-limit state across the whole sweep — it either waits for an imminent quota reset (< 2 minutes) or marks every subsequent server's repository evidence as indeterminate and stamps the affected entries with `rateLimited: true`, so scores stay position-independent and comparable.
 

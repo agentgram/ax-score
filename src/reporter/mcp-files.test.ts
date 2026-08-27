@@ -140,7 +140,11 @@ describe('writeMcpReportFiles', () => {
             offerDescription: 'Paid AX Report for io.github.acme/todo-server',
             route: 'GET /reports/mcp-report.json',
             settlementReceipt: {
+              facilitatorId: 'coinbase-x402',
               network: 'base-sepolia',
+              verificationTimestamp: '2026-07-13T00:00:01.000Z',
+              settlementTimestamp: '2026-07-13T00:00:05.000Z',
+              outcome: 'settled',
               txHash: '0xsettled',
               amount: '0.50',
               asset: 'USDC',
@@ -168,6 +172,9 @@ describe('writeMcpReportFiles', () => {
       expect(manifest.diff?.scoreChanges[0]?.delta).toBe(5);
       expect(markdown).toContain('## x402 paid AX Report receipt');
       expect(markdown).toContain('GET /reports/mcp-report.json');
+      expect(markdown).toContain('coinbase-x402');
+      expect(markdown).toContain('base-sepolia');
+      expect(markdown).toContain('settled');
       expect(manifest.x402PaidAxReportReceipt).toMatchObject({
         signatureAlgorithm: 'ed25519',
         canonicalization: 'json-stable-v1',
@@ -177,6 +184,13 @@ describe('writeMcpReportFiles', () => {
           contentDigestSha256: createHash('sha256')
             .update(JSON.stringify(report, null, 2))
             .digest('hex'),
+          settlementProvenance: {
+            facilitatorId: 'coinbase-x402',
+            network: 'base-sepolia',
+            verificationTimestamp: '2026-07-13T00:00:01.000Z',
+            settlementTimestamp: '2026-07-13T00:00:05.000Z',
+            outcome: 'settled',
+          },
           deliveryUrl: 'https://ax-score.example/reports/mcp-report.json',
         }),
       });
@@ -184,7 +198,11 @@ describe('writeMcpReportFiles', () => {
         createHash('sha256')
           .update(
             stableJson({
+              facilitatorId: 'coinbase-x402',
               network: 'base-sepolia',
+              verificationTimestamp: '2026-07-13T00:00:01.000Z',
+              settlementTimestamp: '2026-07-13T00:00:05.000Z',
+              outcome: 'settled',
               txHash: '0xsettled',
               amount: '0.50',
               asset: 'USDC',
@@ -194,6 +212,71 @@ describe('writeMcpReportFiles', () => {
       );
       expect(manifest.x402PaidAxReportReceipt?.payloadSha256).toMatch(/^[a-f0-9]{64}$/);
       expect(manifest.x402PaidAxReportReceipt?.publicKeyBase64).toMatch(/^MCowBQYDK2VwAyEA/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects x402 receipt generation when settlement provenance is incomplete', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ax-score-mcp-report-'));
+
+    try {
+      expect(() =>
+        writeMcpReportFiles(
+          makeReport(),
+          {
+            json: join(dir, 'report.json'),
+            markdown: join(dir, 'report.md'),
+            manifest: join(dir, 'manifest.json'),
+          },
+          {
+            publishedBaseUrl: 'https://ax-score.example/reports',
+            x402PaidReportOffer: {
+              offerDescription: 'Paid AX Report',
+              route: 'GET /reports/mcp-report.json',
+              settlementReceipt: {
+                facilitatorId: 'coinbase-x402',
+                network: 'base-sepolia',
+                outcome: 'settled',
+              },
+            },
+          }
+        )
+      ).toThrow('settlement provenance');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects x402 receipt generation when settlement provenance changes across retries', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ax-score-mcp-report-'));
+
+    try {
+      expect(() =>
+        writeMcpReportFiles(
+          makeReport(),
+          {
+            json: join(dir, 'report.json'),
+            markdown: join(dir, 'report.md'),
+            manifest: join(dir, 'manifest.json'),
+          },
+          {
+            publishedBaseUrl: 'https://ax-score.example/reports',
+            x402PaidReportOffer: {
+              offerDescription: 'Paid AX Report',
+              route: 'GET /reports/mcp-report.json',
+              settlementReceipt: {
+                facilitatorId: 'coinbase-x402',
+                network: 'base-sepolia',
+                verificationTimestamp: '2026-07-13T00:00:01.000Z',
+                settlementTimestamp: '2026-07-13T00:00:05.000Z',
+                outcome: 'settled',
+              },
+              expectedSettlementProvenanceSha256: '0'.repeat(64),
+            },
+          }
+        )
+      ).toThrow('changed across retries');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

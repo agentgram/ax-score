@@ -57,6 +57,7 @@ interface McpReportCliOptions {
   x402OfferDescription?: string;
   x402Route?: string;
   x402SettlementReceipt?: string;
+  x402ExpectedSettlementProvenanceSha256?: string;
   x402DeliveryUrl?: string;
 }
 
@@ -297,7 +298,11 @@ program
   .option('--x402-route <route>', 'Paid route whose successful retry delivers the AX Report')
   .option(
     '--x402-settlement-receipt <json-or-text>',
-    'x402 facilitator/merchant settlement receipt JSON or receipt id to bind into the receipt'
+    'Structured x402 facilitator/merchant settlement receipt JSON to bind into the receipt'
+  )
+  .option(
+    '--x402-expected-settlement-provenance-sha256 <hex>',
+    'Expected x402 settlement provenance digest; retries fail if facilitator/network/timestamps/outcome drift'
   )
   .option('--x402-delivery-url <url>', 'Durable paid delivery URL; defaults to the hosted JSON report URL')
   .action(async (options: McpReportCliOptions) => {
@@ -330,6 +335,7 @@ program
         options.x402OfferDescription ||
           options.x402Route ||
           options.x402SettlementReceipt ||
+          options.x402ExpectedSettlementProvenanceSha256 ||
           options.x402DeliveryUrl
       );
       if (
@@ -353,6 +359,12 @@ program
                 offerDescription: options.x402OfferDescription!,
                 route: options.x402Route!,
                 settlementReceipt: parseJsonOrString(options.x402SettlementReceipt!),
+                ...(options.x402ExpectedSettlementProvenanceSha256
+                  ? {
+                      expectedSettlementProvenanceSha256:
+                        options.x402ExpectedSettlementProvenanceSha256,
+                    }
+                  : {}),
                 ...(options.x402DeliveryUrl ? { deliveryUrl: options.x402DeliveryUrl } : {}),
               },
             }
