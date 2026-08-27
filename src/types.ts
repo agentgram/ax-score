@@ -660,8 +660,23 @@ export interface McpX402PaidAxReportOffer {
   route: string;
   /** Settlement receipt returned by the x402 facilitator or merchant ledger. */
   settlementReceipt: unknown;
+  /** Previously observed settlement provenance digest; retries must not drift from it. */
+  expectedSettlementProvenanceSha256?: string;
   /** Durable report URL delivered after payment; defaults to hosted JSON report URL. */
   deliveryUrl?: string;
+}
+
+export interface McpX402SettlementProvenance {
+  /** Stable facilitator/provider identity that verified and settled the payment. */
+  facilitatorId: string;
+  /** Payment network used by the facilitator. */
+  network: string;
+  /** ISO timestamp when the facilitator verified payment validity. */
+  verificationTimestamp: string;
+  /** ISO timestamp when final settlement was observed. */
+  settlementTimestamp: string;
+  /** Final settlement outcome. Pending/intermediate states are not accepted. */
+  outcome: 'settled' | 'failed';
 }
 
 export interface McpX402PaidAxReportReceiptPayload {
@@ -670,6 +685,8 @@ export interface McpX402PaidAxReportReceiptPayload {
   contentDigestSha256: string;
   settlementReceipt: unknown;
   settlementReceiptSha256: string;
+  settlementProvenance: McpX402SettlementProvenance;
+  settlementProvenanceSha256: string;
   deliveryUrl: string;
   reportTimestamp: string;
   axScoreVersion: string;

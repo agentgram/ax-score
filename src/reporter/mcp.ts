@@ -155,6 +155,12 @@ export function renderMcpLeaderboard(
     lines.push(`- route: ${escapeMarkdown(receipt.payload.route)}`);
     lines.push(`- content digest: ${receipt.payload.contentDigestSha256}`);
     lines.push(`- settlement receipt digest: ${receipt.payload.settlementReceiptSha256}`);
+    lines.push(`- facilitator: ${escapeMarkdown(receipt.payload.settlementProvenance.facilitatorId)}`);
+    lines.push(`- network: ${escapeMarkdown(receipt.payload.settlementProvenance.network)}`);
+    lines.push(`- verified at: ${receipt.payload.settlementProvenance.verificationTimestamp}`);
+    lines.push(`- settled at: ${receipt.payload.settlementProvenance.settlementTimestamp}`);
+    lines.push(`- final outcome: ${receipt.payload.settlementProvenance.outcome}`);
+    lines.push(`- settlement provenance digest: ${receipt.payload.settlementProvenanceSha256}`);
     lines.push(`- delivery URL: ${receipt.payload.deliveryUrl}`);
     lines.push(`- Ed25519 payload signature: ${receipt.payloadSha256}`);
     lines.push('');

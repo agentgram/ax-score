@@ -16,6 +16,7 @@ import type {
   McpSweepReport,
   McpX402PaidAxReportOffer,
   McpX402PaidAxReportReceipt,
+  McpX402SettlementProvenance,
 } from '../types.js';
 import { renderJSON } from './json.js';
 import { renderMcpLeaderboard } from './mcp.js';
@@ -76,6 +77,76 @@ function sha256Text(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function getStringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function normalizeSettlementOutcome(outcome: string | undefined): McpX402SettlementProvenance['outcome'] | undefined {
+  if (!outcome) return undefined;
+  const normalized = outcome.trim().toLowerCase();
+  if (['settled', 'success', 'succeeded', 'confirmed'].includes(normalized)) return 'settled';
+  if (['failed', 'failure', 'rejected'].includes(normalized)) return 'failed';
+  return undefined;
+}
+
+function requireIsoTimestamp(value: string | undefined, key: string): string {
+  if (!value || Number.isNaN(Date.parse(value))) {
+    throw new Error(`x402 settlement provenance requires a valid ${key}.`);
+  }
+  return value;
+}
+
+function extractX402SettlementProvenance(settlementReceipt: unknown): McpX402SettlementProvenance {
+  if (!isRecord(settlementReceipt)) {
+    throw new Error('x402 settlement provenance requires a structured settlement receipt object.');
+  }
+
+  const facilitator = isRecord(settlementReceipt.facilitator)
+    ? settlementReceipt.facilitator
+    : undefined;
+  const facilitatorId =
+    getStringField(settlementReceipt, 'facilitatorId') ??
+    getStringField(settlementReceipt, 'facilitator') ??
+    (facilitator ? getStringField(facilitator, 'id') : undefined);
+  const network = getStringField(settlementReceipt, 'network');
+  const verificationTimestamp = requireIsoTimestamp(
+    getStringField(settlementReceipt, 'verificationTimestamp') ??
+      getStringField(settlementReceipt, 'verifiedAt'),
+    'verificationTimestamp'
+  );
+  const settlementTimestamp = requireIsoTimestamp(
+    getStringField(settlementReceipt, 'settlementTimestamp') ??
+      getStringField(settlementReceipt, 'settledAt'),
+    'settlementTimestamp'
+  );
+  const outcome = normalizeSettlementOutcome(
+    getStringField(settlementReceipt, 'outcome') ?? getStringField(settlementReceipt, 'status')
+  );
+
+  if (!facilitatorId || !network || !outcome) {
+    throw new Error(
+      'x402 settlement provenance requires facilitatorId, network, verificationTimestamp, settlementTimestamp, and final outcome.'
+    );
+  }
+
+  if (Date.parse(settlementTimestamp) < Date.parse(verificationTimestamp)) {
+    throw new Error('x402 settlement provenance settlementTimestamp cannot precede verificationTimestamp.');
+  }
+
+  return {
+    facilitatorId,
+    network,
+    verificationTimestamp,
+    settlementTimestamp,
+    outcome,
+  };
+}
+
 function signX402PaidAxReportReceipt(args: {
   report: McpSweepReport;
   renderedJson: string;
@@ -91,12 +162,22 @@ function signX402PaidAxReportReceipt(args: {
 
   const { privateKey } = generateKeyPairSync('ed25519');
   const publicKey = createPublicKey(privateKey);
+  const settlementProvenance = extractX402SettlementProvenance(args.offer.settlementReceipt);
+  const settlementProvenanceSha256 = sha256(settlementProvenance);
+  if (
+    args.offer.expectedSettlementProvenanceSha256 &&
+    args.offer.expectedSettlementProvenanceSha256 !== settlementProvenanceSha256
+  ) {
+    throw new Error('x402 settlement provenance changed across retries.');
+  }
   const payload = {
     offerDescription: args.offer.offerDescription,
     route: args.offer.route,
     contentDigestSha256: sha256Text(args.renderedJson),
     settlementReceipt: args.offer.settlementReceipt,
     settlementReceiptSha256: sha256(args.offer.settlementReceipt),
+    settlementProvenance,
+    settlementProvenanceSha256,
     deliveryUrl,
     reportTimestamp: args.report.timestamp,
     axScoreVersion: args.report.version,
