@@ -332,6 +332,41 @@ describe('writeMcpReportFiles', () => {
     }
   });
 
+  it('defers x402 paid AX Report delivery when final outcome failed despite Base finality threshold', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ax-score-mcp-report-'));
+
+    try {
+      expect(() =>
+        writeMcpReportFiles(
+          makeReport(),
+          {
+            json: join(dir, 'report.json'),
+            markdown: join(dir, 'report.md'),
+            manifest: join(dir, 'manifest.json'),
+          },
+          {
+            publishedBaseUrl: 'https://ax-score.example/reports',
+            x402PaidReportOffer: {
+              offerDescription: 'Paid AX Report',
+              route: 'GET /reports/mcp-report.json',
+              settlementReceipt: {
+                facilitatorId: 'coinbase-x402',
+                network: 'base',
+                verificationTimestamp: '2026-07-13T00:00:01.000Z',
+                settlementTimestamp: '2026-07-13T00:00:05.000Z',
+                settlementState: 'settled',
+                outcome: 'failed',
+                finalityConfirmations: 12,
+              },
+            },
+          }
+        )
+      ).toThrow('delivery deferred by x402-finality-policy-v1');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('binds Solana finalized commitment into the x402 delivery decision receipt', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ax-score-mcp-report-'));
 

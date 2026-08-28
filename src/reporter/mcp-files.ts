@@ -158,14 +158,17 @@ function evaluateX402Finality(args: {
   settlementReceipt: Record<string, unknown>;
   networkFamily: McpX402SettlementProvenance['networkFamily'];
   settlementState: McpX402SettlementProvenance['settlementState'];
+  outcome: McpX402SettlementProvenance['outcome'];
 }): McpX402SettlementProvenance['finality'] {
   const finality = getFinalityRecord(args.settlementReceipt);
   const actualConfirmations = readFinalityConfirmations(args.settlementReceipt, finality);
+  const hasSuccessfulFinalOutcome = args.outcome === 'settled';
   if (args.networkFamily === 'base') {
     return {
       requiredConfirmations: BASE_FINALITY_CONFIRMATIONS,
       ...(actualConfirmations !== undefined ? { actualConfirmations } : {}),
       thresholdMet:
+        hasSuccessfulFinalOutcome &&
         args.settlementState === 'settled' &&
         actualConfirmations !== undefined &&
         actualConfirmations >= BASE_FINALITY_CONFIRMATIONS,
@@ -183,6 +186,7 @@ function evaluateX402Finality(args: {
     requiredCommitment: 'finalized',
     ...(actualCommitment ? { actualCommitment } : {}),
     thresholdMet:
+      hasSuccessfulFinalOutcome &&
       args.settlementState === 'settled' &&
       (actualCommitment?.trim().toLowerCase() === 'finalized' ||
         (actualConfirmations !== undefined && actualConfirmations >= SOLANA_FINALITY_CONFIRMATIONS)),
@@ -241,7 +245,7 @@ function extractX402SettlementProvenance(settlementReceipt: unknown): McpX402Set
     throw new Error('x402 settlement provenance settlementTimestamp cannot precede verificationTimestamp.');
   }
 
-  const finality = evaluateX402Finality({ settlementReceipt, networkFamily, settlementState });
+  const finality = evaluateX402Finality({ settlementReceipt, networkFamily, settlementState, outcome });
   const deliveryDecision: McpX402SettlementProvenance['deliveryDecision'] = finality.thresholdMet
     ? 'release'
     : 'defer';
