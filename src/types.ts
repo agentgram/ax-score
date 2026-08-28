@@ -671,12 +671,28 @@ export interface McpX402SettlementProvenance {
   facilitatorId: string;
   /** Payment network used by the facilitator. */
   network: string;
+  /** Normalized network policy family selected for settlement-finality gating. */
+  networkFamily: 'base' | 'solana';
   /** ISO timestamp when the facilitator verified payment validity. */
   verificationTimestamp: string;
   /** ISO timestamp when final settlement was observed. */
   settlementTimestamp: string;
+  /** Facilitator-reported settlement state before finality policy evaluation. */
+  settlementState: 'verified' | 'pending' | 'settled' | 'failed';
   /** Final settlement outcome. Pending/intermediate states are not accepted. */
   outcome: 'settled' | 'failed';
+  /** Versioned AX Score policy used to decide whether report delivery is allowed. */
+  finalityPolicyVersion: string;
+  /** Network-specific threshold evidence used for the delivery decision. */
+  finality: {
+    requiredConfirmations?: number;
+    actualConfirmations?: number;
+    requiredCommitment?: 'finalized';
+    actualCommitment?: string;
+    thresholdMet: boolean;
+  };
+  /** Whether the paid AX Report artifact may be released for this settlement. */
+  deliveryDecision: 'release' | 'defer';
 }
 
 export interface McpX402PaidAxReportReceiptPayload {
