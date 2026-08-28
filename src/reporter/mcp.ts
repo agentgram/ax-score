@@ -157,9 +157,26 @@ export function renderMcpLeaderboard(
     lines.push(`- settlement receipt digest: ${receipt.payload.settlementReceiptSha256}`);
     lines.push(`- facilitator: ${escapeMarkdown(receipt.payload.settlementProvenance.facilitatorId)}`);
     lines.push(`- network: ${escapeMarkdown(receipt.payload.settlementProvenance.network)}`);
+    lines.push(`- network family: ${receipt.payload.settlementProvenance.networkFamily}`);
+    lines.push(`- settlement state: ${receipt.payload.settlementProvenance.settlementState}`);
     lines.push(`- verified at: ${receipt.payload.settlementProvenance.verificationTimestamp}`);
     lines.push(`- settled at: ${receipt.payload.settlementProvenance.settlementTimestamp}`);
     lines.push(`- final outcome: ${receipt.payload.settlementProvenance.outcome}`);
+    lines.push(`- finality policy: ${receipt.payload.settlementProvenance.finalityPolicyVersion}`);
+    lines.push(
+      `- finality threshold met: ${receipt.payload.settlementProvenance.finality.thresholdMet}`
+    );
+    if (receipt.payload.settlementProvenance.finality.requiredConfirmations !== undefined) {
+      lines.push(
+        `- confirmations: ${receipt.payload.settlementProvenance.finality.actualConfirmations ?? 'unknown'} / ${receipt.payload.settlementProvenance.finality.requiredConfirmations}`
+      );
+    }
+    if (receipt.payload.settlementProvenance.finality.requiredCommitment) {
+      lines.push(
+        `- commitment: ${escapeMarkdown(receipt.payload.settlementProvenance.finality.actualCommitment ?? 'unknown')} / ${receipt.payload.settlementProvenance.finality.requiredCommitment}`
+      );
+    }
+    lines.push(`- delivery decision: ${receipt.payload.settlementProvenance.deliveryDecision}`);
     lines.push(`- settlement provenance digest: ${receipt.payload.settlementProvenanceSha256}`);
     lines.push(`- delivery URL: ${receipt.payload.deliveryUrl}`);
     lines.push(`- Ed25519 payload signature: ${receipt.payloadSha256}`);

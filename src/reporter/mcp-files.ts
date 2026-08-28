@@ -86,12 +86,111 @@ function getStringField(record: Record<string, unknown>, key: string): string | 
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
 }
 
+function getNumberField(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+const X402_FINALITY_POLICY_VERSION = 'x402-finality-policy-v1';
+
+const BASE_FINALITY_CONFIRMATIONS = 12;
+const SOLANA_FINALITY_CONFIRMATIONS = 32;
+
+function normalizeX402NetworkFamily(network: string): McpX402SettlementProvenance['networkFamily'] | undefined {
+  const normalized = network.trim().toLowerCase();
+  if (normalized === 'base' || normalized === 'base-sepolia') return 'base';
+  if (normalized === 'solana' || normalized === 'solana-devnet' || normalized === 'solana-mainnet') {
+    return 'solana';
+  }
+  return undefined;
+}
+
+function normalizeSettlementState(
+  state: string | undefined
+): McpX402SettlementProvenance['settlementState'] | undefined {
+  if (!state) return undefined;
+  const normalized = state.trim().toLowerCase();
+  if (['verified', 'screened', 'authorized'].includes(normalized)) return 'verified';
+  if (['pending', 'processing', 'submitted'].includes(normalized)) return 'pending';
+  if (['settled', 'success', 'succeeded', 'confirmed', 'finalized'].includes(normalized)) {
+    return 'settled';
+  }
+  if (['failed', 'failure', 'rejected'].includes(normalized)) return 'failed';
+  return undefined;
+}
+
 function normalizeSettlementOutcome(outcome: string | undefined): McpX402SettlementProvenance['outcome'] | undefined {
   if (!outcome) return undefined;
   const normalized = outcome.trim().toLowerCase();
   if (['settled', 'success', 'succeeded', 'confirmed'].includes(normalized)) return 'settled';
   if (['failed', 'failure', 'rejected'].includes(normalized)) return 'failed';
   return undefined;
+}
+
+function getFinalityRecord(settlementReceipt: Record<string, unknown>): Record<string, unknown> {
+  return isRecord(settlementReceipt.finality) ? settlementReceipt.finality : settlementReceipt;
+}
+
+function readFinalityConfirmations(
+  settlementReceipt: Record<string, unknown>,
+  finality: Record<string, unknown>
+): number | undefined {
+  return (
+    getNumberField(finality, 'confirmations') ??
+    getNumberField(finality, 'confirmationCount') ??
+    getNumberField(finality, 'finalityConfirmations') ??
+    getNumberField(finality, 'blocksConfirmed') ??
+    getNumberField(finality, 'slotsConfirmed') ??
+    getNumberField(settlementReceipt, 'confirmations') ??
+    getNumberField(settlementReceipt, 'confirmationCount') ??
+    getNumberField(settlementReceipt, 'finalityConfirmations') ??
+    getNumberField(settlementReceipt, 'blocksConfirmed') ??
+    getNumberField(settlementReceipt, 'slotsConfirmed')
+  );
+}
+
+function evaluateX402Finality(args: {
+  settlementReceipt: Record<string, unknown>;
+  networkFamily: McpX402SettlementProvenance['networkFamily'];
+  settlementState: McpX402SettlementProvenance['settlementState'];
+  outcome: McpX402SettlementProvenance['outcome'];
+}): McpX402SettlementProvenance['finality'] {
+  const finality = getFinalityRecord(args.settlementReceipt);
+  const actualConfirmations = readFinalityConfirmations(args.settlementReceipt, finality);
+  const hasSuccessfulFinalOutcome = args.outcome === 'settled';
+  if (args.networkFamily === 'base') {
+    return {
+      requiredConfirmations: BASE_FINALITY_CONFIRMATIONS,
+      ...(actualConfirmations !== undefined ? { actualConfirmations } : {}),
+      thresholdMet:
+        hasSuccessfulFinalOutcome &&
+        args.settlementState === 'settled' &&
+        actualConfirmations !== undefined &&
+        actualConfirmations >= BASE_FINALITY_CONFIRMATIONS,
+    };
+  }
+
+  const actualCommitment =
+    getStringField(finality, 'commitment') ??
+    getStringField(finality, 'finalityCommitment') ??
+    getStringField(args.settlementReceipt, 'commitment') ??
+    getStringField(args.settlementReceipt, 'finalityCommitment');
+  return {
+    requiredConfirmations: SOLANA_FINALITY_CONFIRMATIONS,
+    ...(actualConfirmations !== undefined ? { actualConfirmations } : {}),
+    requiredCommitment: 'finalized',
+    ...(actualCommitment ? { actualCommitment } : {}),
+    thresholdMet:
+      hasSuccessfulFinalOutcome &&
+      args.settlementState === 'settled' &&
+      (actualCommitment?.trim().toLowerCase() === 'finalized' ||
+        (actualConfirmations !== undefined && actualConfirmations >= SOLANA_FINALITY_CONFIRMATIONS)),
+  };
 }
 
 function requireIsoTimestamp(value: string | undefined, key: string): string {
@@ -114,6 +213,7 @@ function extractX402SettlementProvenance(settlementReceipt: unknown): McpX402Set
     getStringField(settlementReceipt, 'facilitator') ??
     (facilitator ? getStringField(facilitator, 'id') : undefined);
   const network = getStringField(settlementReceipt, 'network');
+  const networkFamily = network ? normalizeX402NetworkFamily(network) : undefined;
   const verificationTimestamp = requireIsoTimestamp(
     getStringField(settlementReceipt, 'verificationTimestamp') ??
       getStringField(settlementReceipt, 'verifiedAt'),
@@ -127,10 +227,17 @@ function extractX402SettlementProvenance(settlementReceipt: unknown): McpX402Set
   const outcome = normalizeSettlementOutcome(
     getStringField(settlementReceipt, 'outcome') ?? getStringField(settlementReceipt, 'status')
   );
+  const settlementState = normalizeSettlementState(
+    getStringField(settlementReceipt, 'settlementState') ??
+      getStringField(settlementReceipt, 'settlementStatus') ??
+      getStringField(settlementReceipt, 'state') ??
+      getStringField(settlementReceipt, 'outcome') ??
+      getStringField(settlementReceipt, 'status')
+  );
 
-  if (!facilitatorId || !network || !outcome) {
+  if (!facilitatorId || !network || !networkFamily || !settlementState || !outcome) {
     throw new Error(
-      'x402 settlement provenance requires facilitatorId, network, verificationTimestamp, settlementTimestamp, and final outcome.'
+      'x402 settlement provenance requires facilitatorId, supported Base/Solana network, verificationTimestamp, settlementTimestamp, settlement state, and final outcome.'
     );
   }
 
@@ -138,12 +245,27 @@ function extractX402SettlementProvenance(settlementReceipt: unknown): McpX402Set
     throw new Error('x402 settlement provenance settlementTimestamp cannot precede verificationTimestamp.');
   }
 
+  const finality = evaluateX402Finality({ settlementReceipt, networkFamily, settlementState, outcome });
+  const deliveryDecision: McpX402SettlementProvenance['deliveryDecision'] = finality.thresholdMet
+    ? 'release'
+    : 'defer';
+  if (deliveryDecision !== 'release') {
+    throw new Error(
+      `x402 paid AX Report delivery deferred by ${X402_FINALITY_POLICY_VERSION}: ${network} settlement has not reached the selected network finality threshold.`
+    );
+  }
+
   return {
     facilitatorId,
     network,
+    networkFamily,
     verificationTimestamp,
     settlementTimestamp,
+    settlementState,
     outcome,
+    finalityPolicyVersion: X402_FINALITY_POLICY_VERSION,
+    finality,
+    deliveryDecision,
   };
 }
 

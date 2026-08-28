@@ -145,6 +145,7 @@ describe('writeMcpReportFiles', () => {
               verificationTimestamp: '2026-07-13T00:00:01.000Z',
               settlementTimestamp: '2026-07-13T00:00:05.000Z',
               outcome: 'settled',
+              finalityConfirmations: 12,
               txHash: '0xsettled',
               amount: '0.50',
               asset: 'USDC',
@@ -175,6 +176,9 @@ describe('writeMcpReportFiles', () => {
       expect(markdown).toContain('coinbase-x402');
       expect(markdown).toContain('base-sepolia');
       expect(markdown).toContain('settled');
+      expect(markdown).toContain('x402-finality-policy-v1');
+      expect(markdown).toContain('delivery decision: release');
+      expect(markdown).toContain('confirmations: 12 / 12');
       expect(manifest.x402PaidAxReportReceipt).toMatchObject({
         signatureAlgorithm: 'ed25519',
         canonicalization: 'json-stable-v1',
@@ -187,9 +191,18 @@ describe('writeMcpReportFiles', () => {
           settlementProvenance: {
             facilitatorId: 'coinbase-x402',
             network: 'base-sepolia',
+            networkFamily: 'base',
             verificationTimestamp: '2026-07-13T00:00:01.000Z',
             settlementTimestamp: '2026-07-13T00:00:05.000Z',
+            settlementState: 'settled',
             outcome: 'settled',
+            finalityPolicyVersion: 'x402-finality-policy-v1',
+            finality: {
+              requiredConfirmations: 12,
+              actualConfirmations: 12,
+              thresholdMet: true,
+            },
+            deliveryDecision: 'release',
           },
           deliveryUrl: 'https://ax-score.example/reports/mcp-report.json',
         }),
@@ -203,6 +216,7 @@ describe('writeMcpReportFiles', () => {
               verificationTimestamp: '2026-07-13T00:00:01.000Z',
               settlementTimestamp: '2026-07-13T00:00:05.000Z',
               outcome: 'settled',
+              finalityConfirmations: 12,
               txHash: '0xsettled',
               amount: '0.50',
               asset: 'USDC',
@@ -271,12 +285,136 @@ describe('writeMcpReportFiles', () => {
                 verificationTimestamp: '2026-07-13T00:00:01.000Z',
                 settlementTimestamp: '2026-07-13T00:00:05.000Z',
                 outcome: 'settled',
+                finalityConfirmations: 12,
               },
               expectedSettlementProvenanceSha256: '0'.repeat(64),
             },
           }
         )
       ).toThrow('changed across retries');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('defers x402 paid AX Report delivery until Base settlement reaches the finality threshold', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ax-score-mcp-report-'));
+
+    try {
+      expect(() =>
+        writeMcpReportFiles(
+          makeReport(),
+          {
+            json: join(dir, 'report.json'),
+            markdown: join(dir, 'report.md'),
+            manifest: join(dir, 'manifest.json'),
+          },
+          {
+            publishedBaseUrl: 'https://ax-score.example/reports',
+            x402PaidReportOffer: {
+              offerDescription: 'Paid AX Report',
+              route: 'GET /reports/mcp-report.json',
+              settlementReceipt: {
+                facilitatorId: 'coinbase-x402',
+                network: 'base',
+                verificationTimestamp: '2026-07-13T00:00:01.000Z',
+                settlementTimestamp: '2026-07-13T00:00:05.000Z',
+                settlementState: 'settled',
+                outcome: 'settled',
+                finality: { confirmations: 11 },
+              },
+            },
+          }
+        )
+      ).toThrow('delivery deferred by x402-finality-policy-v1');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('defers x402 paid AX Report delivery when final outcome failed despite Base finality threshold', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ax-score-mcp-report-'));
+
+    try {
+      expect(() =>
+        writeMcpReportFiles(
+          makeReport(),
+          {
+            json: join(dir, 'report.json'),
+            markdown: join(dir, 'report.md'),
+            manifest: join(dir, 'manifest.json'),
+          },
+          {
+            publishedBaseUrl: 'https://ax-score.example/reports',
+            x402PaidReportOffer: {
+              offerDescription: 'Paid AX Report',
+              route: 'GET /reports/mcp-report.json',
+              settlementReceipt: {
+                facilitatorId: 'coinbase-x402',
+                network: 'base',
+                verificationTimestamp: '2026-07-13T00:00:01.000Z',
+                settlementTimestamp: '2026-07-13T00:00:05.000Z',
+                settlementState: 'settled',
+                outcome: 'failed',
+                finalityConfirmations: 12,
+              },
+            },
+          }
+        )
+      ).toThrow('delivery deferred by x402-finality-policy-v1');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('binds Solana finalized commitment into the x402 delivery decision receipt', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ax-score-mcp-report-'));
+
+    try {
+      const paths = writeMcpReportFiles(
+        makeReport(),
+        {
+          json: join(dir, 'report.json'),
+          markdown: join(dir, 'report.md'),
+          manifest: join(dir, 'manifest.json'),
+        },
+        {
+          publishedBaseUrl: 'https://ax-score.example/reports',
+          x402PaidReportOffer: {
+            offerDescription: 'Paid AX Report',
+            route: 'GET /reports/mcp-report.json',
+            settlementReceipt: {
+              facilitatorId: 'coinbase-x402',
+              network: 'solana',
+              verificationTimestamp: '2026-07-13T00:00:01.000Z',
+              settlementTimestamp: '2026-07-13T00:00:05.000Z',
+              settlementState: 'settled',
+              outcome: 'settled',
+              finality: { commitment: 'finalized' },
+            },
+          },
+        }
+      );
+
+      const markdown = readFileSync(paths.markdown, 'utf8');
+      const manifest = JSON.parse(
+        readFileSync(paths.manifest!, 'utf8')
+      ) as McpReportArtifactManifest;
+
+      expect(markdown).toContain('network family: solana');
+      expect(markdown).toContain('commitment: finalized / finalized');
+      expect(manifest.x402PaidAxReportReceipt?.payload.settlementProvenance).toMatchObject({
+        network: 'solana',
+        networkFamily: 'solana',
+        finalityPolicyVersion: 'x402-finality-policy-v1',
+        finality: {
+          requiredConfirmations: 32,
+          requiredCommitment: 'finalized',
+          actualCommitment: 'finalized',
+          thresholdMet: true,
+        },
+        deliveryDecision: 'release',
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
