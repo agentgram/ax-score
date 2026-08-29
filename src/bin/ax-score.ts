@@ -12,10 +12,7 @@ import { writeMcpReportFiles } from '../reporter/mcp-files.js';
 import { uploadReport } from '../upload.js';
 import { VERSION } from '../config/default.js';
 import type { McpSweepReport } from '../types.js';
-import {
-  DEFAULT_MCP_REGISTRY_URL,
-  DEFAULT_MCP_SWEEP_CONCURRENCY,
-} from '../config/mcp.js';
+import { DEFAULT_MCP_REGISTRY_URL, DEFAULT_MCP_SWEEP_CONCURRENCY } from '../config/mcp.js';
 
 interface CliOptions {
   format: string;
@@ -56,6 +53,12 @@ interface McpReportCliOptions {
   publishedBaseUrl?: string;
   x402OfferDescription?: string;
   x402Route?: string;
+  x402Scheme?: string;
+  x402Network?: string;
+  x402VerifyMode?: 'local' | 'named-facilitator';
+  x402VerifyFacilitatorId?: string;
+  x402SettleMode?: 'local' | 'named-facilitator';
+  x402SettleFacilitatorId?: string;
   x402SettlementReceipt?: string;
   x402ExpectedSettlementProvenanceSha256?: string;
   x402DeliveryUrl?: string;
@@ -79,6 +82,13 @@ function parseJsonOrString(value: string): unknown {
   } catch {
     return value;
   }
+}
+
+function parseX402TopologyMode(value: string): 'local' | 'named-facilitator' {
+  if (value === 'local' || value === 'named-facilitator') {
+    return value;
+  }
+  throw new InvalidArgumentError('value must be local or named-facilitator');
 }
 
 const program = new Command();
@@ -173,8 +183,18 @@ program
     parsePositiveInteger,
     DEFAULT_SWEEP_LIMIT
   )
-  .option('--page-size <n>', 'Registry API page size for sweep pagination', parsePositiveInteger, 100)
-  .option('--retries <n>', 'Retries for transient Registry API failures', parseNonNegativeInteger, 2)
+  .option(
+    '--page-size <n>',
+    'Registry API page size for sweep pagination',
+    parsePositiveInteger,
+    100
+  )
+  .option(
+    '--retries <n>',
+    'Retries for transient Registry API failures',
+    parseNonNegativeInteger,
+    2
+  )
   .option(
     '--retry-backoff-ms <ms>',
     'Initial retry backoff in milliseconds for Registry API failures',
@@ -275,7 +295,12 @@ program
     DEFAULT_SWEEP_LIMIT
   )
   .option('--page-size <n>', 'Registry API page size for pagination', parsePositiveInteger, 100)
-  .option('--retries <n>', 'Retries for transient Registry API failures', parseNonNegativeInteger, 2)
+  .option(
+    '--retries <n>',
+    'Retries for transient Registry API failures',
+    parseNonNegativeInteger,
+    2
+  )
   .option(
     '--retry-backoff-ms <ms>',
     'Initial retry backoff in milliseconds for Registry API failures',
@@ -294,8 +319,25 @@ program
   .option('--manifest-output <file>', 'Path for a scheduled artifact manifest JSON file')
   .option('--diff-from <file>', 'Previous JSON report to compare against for historical diffs')
   .option('--published-base-url <url>', 'Hosted base URL where report artifacts will be published')
-  .option('--x402-offer-description <text>', 'HTTP 402 paid AX Report offer description to bind into the receipt')
+  .option(
+    '--x402-offer-description <text>',
+    'HTTP 402 paid AX Report offer description to bind into the receipt'
+  )
   .option('--x402-route <route>', 'Paid route whose successful retry delivers the AX Report')
+  .option('--x402-scheme <scheme>', 'x402 payment scheme selected during authorization, e.g. exact')
+  .option('--x402-network <network>', 'x402 payment network selected during authorization')
+  .option(
+    '--x402-verify-mode <mode>',
+    'x402 /verify topology selected during authorization; allowed values: local, named-facilitator',
+    parseX402TopologyMode
+  )
+  .option('--x402-verify-facilitator-id <id>', 'Named x402 facilitator used for /verify')
+  .option(
+    '--x402-settle-mode <mode>',
+    'x402 /settle topology selected during authorization; allowed values: local, named-facilitator',
+    parseX402TopologyMode
+  )
+  .option('--x402-settle-facilitator-id <id>', 'Named x402 facilitator used for /settle')
   .option(
     '--x402-settlement-receipt <json-or-text>',
     'Structured x402 facilitator/merchant settlement receipt JSON to bind into the receipt'
@@ -304,16 +346,17 @@ program
     '--x402-expected-settlement-provenance-sha256 <hex>',
     'Expected x402 settlement provenance digest; retries fail if facilitator/network/timestamps/outcome drift'
   )
-  .option('--x402-delivery-url <url>', 'Durable paid delivery URL; defaults to the hosted JSON report URL')
+  .option(
+    '--x402-delivery-url <url>',
+    'Durable paid delivery URL; defaults to the hosted JSON report URL'
+  )
   .action(async (options: McpReportCliOptions) => {
     const timeout = parseInt(options.timeout, 10);
     const spinner = ora(`Auditing ${options.limit} MCP Registry servers...`).start();
 
     try {
       const resumeFrom = options.resume ? readResumeReport(options.jsonOutput) : undefined;
-      const previousReport = options.diffFrom
-        ? readResumeReport(options.diffFrom)
-        : resumeFrom;
+      const previousReport = options.diffFrom ? readResumeReport(options.diffFrom) : resumeFrom;
       const report = await runMcpStaticReport(
         {
           registryUrl: options.registry,
@@ -333,43 +376,79 @@ program
       spinner.stop();
       const hasAnyX402Option = Boolean(
         options.x402OfferDescription ||
-          options.x402Route ||
-          options.x402SettlementReceipt ||
-          options.x402ExpectedSettlementProvenanceSha256 ||
-          options.x402DeliveryUrl
+        options.x402Route ||
+        options.x402Scheme ||
+        options.x402Network ||
+        options.x402VerifyMode ||
+        options.x402VerifyFacilitatorId ||
+        options.x402SettleMode ||
+        options.x402SettleFacilitatorId ||
+        options.x402SettlementReceipt ||
+        options.x402ExpectedSettlementProvenanceSha256 ||
+        options.x402DeliveryUrl
       );
       if (
         hasAnyX402Option &&
-        (!options.x402OfferDescription || !options.x402Route || !options.x402SettlementReceipt)
+        (!options.x402OfferDescription ||
+          !options.x402Route ||
+          !options.x402Scheme ||
+          !options.x402Network ||
+          !options.x402SettlementReceipt)
       ) {
         throw new Error(
-          'x402 paid AX Report receipts require --x402-offer-description, --x402-route, and --x402-settlement-receipt.'
+          'x402 paid AX Report receipts require --x402-offer-description, --x402-route, --x402-scheme, --x402-network, and --x402-settlement-receipt.'
         );
       }
-      writeMcpReportFiles(report, {
-        json: options.jsonOutput,
-        markdown: options.markdownOutput,
-        manifest: options.manifestOutput,
-      }, {
-        previousReport,
-        publishedBaseUrl: options.publishedBaseUrl,
-        ...(hasAnyX402Option
-          ? {
-              x402PaidReportOffer: {
-                offerDescription: options.x402OfferDescription!,
-                route: options.x402Route!,
-                settlementReceipt: parseJsonOrString(options.x402SettlementReceipt!),
-                ...(options.x402ExpectedSettlementProvenanceSha256
-                  ? {
-                      expectedSettlementProvenanceSha256:
-                        options.x402ExpectedSettlementProvenanceSha256,
-                    }
-                  : {}),
-                ...(options.x402DeliveryUrl ? { deliveryUrl: options.x402DeliveryUrl } : {}),
-              },
-            }
-          : {}),
-      });
+      writeMcpReportFiles(
+        report,
+        {
+          json: options.jsonOutput,
+          markdown: options.markdownOutput,
+          manifest: options.manifestOutput,
+        },
+        {
+          previousReport,
+          publishedBaseUrl: options.publishedBaseUrl,
+          ...(hasAnyX402Option
+            ? {
+                x402PaidReportOffer: {
+                  offerDescription: options.x402OfferDescription!,
+                  route: options.x402Route!,
+                  scheme: options.x402Scheme!,
+                  network: options.x402Network!,
+                  ...(options.x402VerifyMode
+                    ? {
+                        verificationTopology: {
+                          mode: options.x402VerifyMode,
+                          ...(options.x402VerifyFacilitatorId
+                            ? { facilitatorId: options.x402VerifyFacilitatorId }
+                            : {}),
+                        },
+                      }
+                    : {}),
+                  ...(options.x402SettleMode
+                    ? {
+                        settlementTopology: {
+                          mode: options.x402SettleMode,
+                          ...(options.x402SettleFacilitatorId
+                            ? { facilitatorId: options.x402SettleFacilitatorId }
+                            : {}),
+                        },
+                      }
+                    : {}),
+                  settlementReceipt: parseJsonOrString(options.x402SettlementReceipt!),
+                  ...(options.x402ExpectedSettlementProvenanceSha256
+                    ? {
+                        expectedSettlementProvenanceSha256:
+                          options.x402ExpectedSettlementProvenanceSha256,
+                      }
+                    : {}),
+                  ...(options.x402DeliveryUrl ? { deliveryUrl: options.x402DeliveryUrl } : {}),
+                },
+              }
+            : {}),
+        }
+      );
 
       console.log(renderMcpLeaderboard(report));
       console.error(`JSON report written to ${options.jsonOutput}`);

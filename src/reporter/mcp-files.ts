@@ -14,8 +14,11 @@ import type {
   McpSweepDiff,
   McpSweepEntry,
   McpSweepReport,
+  McpX402ObservedRouteTopology,
   McpX402PaidAxReportOffer,
   McpX402PaidAxReportReceipt,
+  McpX402RouteTopology,
+  McpX402RouteTopologyMode,
   McpX402SettlementProvenance,
 } from '../types.js';
 import { renderJSON } from './json.js';
@@ -86,11 +89,23 @@ function getStringField(record: Record<string, unknown>, key: string): string | 
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
 }
 
-function normalizeSettlementOutcome(outcome: string | undefined): McpX402SettlementProvenance['outcome'] | undefined {
+function normalizeSettlementOutcome(
+  outcome: string | undefined
+): McpX402SettlementProvenance['outcome'] | undefined {
   if (!outcome) return undefined;
   const normalized = outcome.trim().toLowerCase();
   if (['settled', 'success', 'succeeded', 'confirmed'].includes(normalized)) return 'settled';
   if (['failed', 'failure', 'rejected'].includes(normalized)) return 'failed';
+  return undefined;
+}
+
+function normalizeTopologyMode(mode: string | undefined): McpX402RouteTopologyMode | undefined {
+  if (!mode) return undefined;
+  const normalized = mode.trim().toLowerCase();
+  if (['local', 'merchant', 'merchant-local'].includes(normalized)) return 'local';
+  if (['named-facilitator', 'facilitator', 'remote-facilitator'].includes(normalized)) {
+    return 'named-facilitator';
+  }
   return undefined;
 }
 
@@ -101,7 +116,85 @@ function requireIsoTimestamp(value: string | undefined, key: string): string {
   return value;
 }
 
-function extractX402SettlementProvenance(settlementReceipt: unknown): McpX402SettlementProvenance {
+function requireNonEmptyString(value: string | undefined, key: string): string {
+  if (!value) {
+    throw new Error(`x402 settlement provenance requires ${key}.`);
+  }
+  return value;
+}
+
+function getRecordField(
+  record: Record<string, unknown>,
+  key: string
+): Record<string, unknown> | undefined {
+  const value = record[key];
+  return isRecord(value) ? value : undefined;
+}
+
+function extractObservedTopology(args: {
+  receipt: Record<string, unknown>;
+  key: 'verify' | 'settle';
+  fallbackOutcome: string;
+  fallbackTimestamp: string;
+  fallbackFacilitatorId: string;
+  expected?: McpX402RouteTopology;
+}): { topology: McpX402ObservedRouteTopology; timestamp: string } {
+  const record =
+    getRecordField(args.receipt, args.key) ??
+    getRecordField(args.receipt, args.key === 'verify' ? 'verification' : 'settlement');
+  const mode =
+    (record ? normalizeTopologyMode(getStringField(record, 'mode')) : undefined) ??
+    args.expected?.mode ??
+    'named-facilitator';
+  const facilitatorId =
+    (record ? getStringField(record, 'facilitatorId') : undefined) ??
+    args.expected?.facilitatorId ??
+    (mode === 'named-facilitator' ? args.fallbackFacilitatorId : undefined);
+  const outcome =
+    (record
+      ? (getStringField(record, 'outcome') ?? getStringField(record, 'status'))
+      : undefined) ?? args.fallbackOutcome;
+  const timestamp =
+    (record
+      ? (getStringField(record, 'timestamp') ?? getStringField(record, 'observedAt'))
+      : undefined) ?? args.fallbackTimestamp;
+
+  if (mode === 'named-facilitator' && !facilitatorId) {
+    throw new Error(
+      'x402 settlement provenance requires facilitatorId for named-facilitator topology.'
+    );
+  }
+  if (!outcome) {
+    throw new Error(`x402 settlement provenance requires /${args.key} outcome.`);
+  }
+
+  return {
+    topology: {
+      mode,
+      ...(facilitatorId ? { facilitatorId } : {}),
+      outcome,
+    },
+    timestamp,
+  };
+}
+
+function assertExpectedTopology(
+  observed: McpX402ObservedRouteTopology,
+  expected: McpX402RouteTopology | undefined,
+  step: 'verify' | 'settle'
+): void {
+  if (!expected) return;
+  if (observed.mode !== expected.mode || observed.facilitatorId !== expected.facilitatorId) {
+    throw new Error(
+      `x402 topology drift: /${step} topology changed between authorization and settlement.`
+    );
+  }
+}
+
+function extractX402SettlementProvenance(
+  offer: McpX402PaidAxReportOffer
+): McpX402SettlementProvenance {
+  const settlementReceipt = offer.settlementReceipt;
   if (!isRecord(settlementReceipt)) {
     throw new Error('x402 settlement provenance requires a structured settlement receipt object.');
   }
@@ -113,15 +206,35 @@ function extractX402SettlementProvenance(settlementReceipt: unknown): McpX402Set
     getStringField(settlementReceipt, 'facilitatorId') ??
     getStringField(settlementReceipt, 'facilitator') ??
     (facilitator ? getStringField(facilitator, 'id') : undefined);
-  const network = getStringField(settlementReceipt, 'network');
+  const scheme = requireNonEmptyString(
+    offer.scheme ?? getStringField(settlementReceipt, 'scheme'),
+    'scheme'
+  );
+  const network = requireNonEmptyString(
+    offer.network ?? getStringField(settlementReceipt, 'network'),
+    'network'
+  );
+  const verificationRecord =
+    getRecordField(settlementReceipt, 'verify') ??
+    getRecordField(settlementReceipt, 'verification');
+  const settlementRecord =
+    getRecordField(settlementReceipt, 'settle') ?? getRecordField(settlementReceipt, 'settlement');
   const verificationTimestamp = requireIsoTimestamp(
     getStringField(settlementReceipt, 'verificationTimestamp') ??
-      getStringField(settlementReceipt, 'verifiedAt'),
+      getStringField(settlementReceipt, 'verifiedAt') ??
+      (verificationRecord
+        ? (getStringField(verificationRecord, 'timestamp') ??
+          getStringField(verificationRecord, 'observedAt'))
+        : undefined),
     'verificationTimestamp'
   );
   const settlementTimestamp = requireIsoTimestamp(
     getStringField(settlementReceipt, 'settlementTimestamp') ??
-      getStringField(settlementReceipt, 'settledAt'),
+      getStringField(settlementReceipt, 'settledAt') ??
+      (settlementRecord
+        ? (getStringField(settlementRecord, 'timestamp') ??
+          getStringField(settlementRecord, 'observedAt'))
+        : undefined),
     'settlementTimestamp'
   );
   const outcome = normalizeSettlementOutcome(
@@ -134,13 +247,54 @@ function extractX402SettlementProvenance(settlementReceipt: unknown): McpX402Set
     );
   }
 
+  if (
+    offer.scheme &&
+    getStringField(settlementReceipt, 'scheme') &&
+    offer.scheme !== getStringField(settlementReceipt, 'scheme')
+  ) {
+    throw new Error('x402 topology drift: scheme changed between authorization and settlement.');
+  }
+
+  if (
+    offer.network &&
+    getStringField(settlementReceipt, 'network') &&
+    offer.network !== getStringField(settlementReceipt, 'network')
+  ) {
+    throw new Error('x402 topology drift: network changed between authorization and settlement.');
+  }
+
+  const verification = extractObservedTopology({
+    receipt: settlementReceipt,
+    key: 'verify',
+    fallbackOutcome: 'verified',
+    fallbackTimestamp: verificationTimestamp,
+    fallbackFacilitatorId: facilitatorId,
+    expected: offer.verificationTopology,
+  });
+  const settlement = extractObservedTopology({
+    receipt: settlementReceipt,
+    key: 'settle',
+    fallbackOutcome: outcome,
+    fallbackTimestamp: settlementTimestamp,
+    fallbackFacilitatorId: facilitatorId,
+    expected: offer.settlementTopology,
+  });
+
+  assertExpectedTopology(verification.topology, offer.verificationTopology, 'verify');
+  assertExpectedTopology(settlement.topology, offer.settlementTopology, 'settle');
+
   if (Date.parse(settlementTimestamp) < Date.parse(verificationTimestamp)) {
-    throw new Error('x402 settlement provenance settlementTimestamp cannot precede verificationTimestamp.');
+    throw new Error(
+      'x402 settlement provenance settlementTimestamp cannot precede verificationTimestamp.'
+    );
   }
 
   return {
     facilitatorId,
+    scheme,
     network,
+    verificationTopology: verification.topology,
+    settlementTopology: settlement.topology,
     verificationTimestamp,
     settlementTimestamp,
     outcome,
@@ -162,7 +316,7 @@ function signX402PaidAxReportReceipt(args: {
 
   const { privateKey } = generateKeyPairSync('ed25519');
   const publicKey = createPublicKey(privateKey);
-  const settlementProvenance = extractX402SettlementProvenance(args.offer.settlementReceipt);
+  const settlementProvenance = extractX402SettlementProvenance(args.offer);
   const settlementProvenanceSha256 = sha256(settlementProvenance);
   if (
     args.offer.expectedSettlementProvenanceSha256 &&
@@ -258,7 +412,9 @@ function detectSemanticVersionReceipts(
     .sort((a, b) => a.server.localeCompare(b.server));
 }
 
-function activeEd25519Keys(entry: McpSweepEntry): Array<{ version?: number | null; publicKeyBase64: string }> {
+function activeEd25519Keys(
+  entry: McpSweepEntry
+): Array<{ version?: number | null; publicKeyBase64: string }> {
   return (entry.erc8004Identity?.ed25519PublicKeys ?? [])
     .filter((key) => key.revoked !== true)
     .filter((key) => typeof key.publicKeyBase64 === 'string' && key.publicKeyBase64.length > 0)
@@ -286,7 +442,8 @@ function verifyContinuityReceipt(args: {
 }): boolean {
   if (args.receipt.signatureAlgorithm !== 'ed25519') return false;
   if (args.receipt.canonicalization !== 'json-stable-v1') return false;
-  if (args.receipt.kind !== 'old-to-new-continuity' && args.receipt.kind !== 'explicit-revocation') return false;
+  if (args.receipt.kind !== 'old-to-new-continuity' && args.receipt.kind !== 'explicit-revocation')
+    return false;
   if (args.receipt.payloadSha256 !== sha256(args.receipt.payload)) return false;
 
   const previousIdentity = args.previousEntry.erc8004Identity;
@@ -338,7 +495,12 @@ function evaluateIdentityContinuity(
   const agentBindingChanged = !sameAgentBinding(previousEntry, currentEntry);
 
   if (!ed25519KeyChanged) {
-    return { agentBindingChanged, ed25519KeyChanged, continuityVerified: true, decision: 'unchanged' };
+    return {
+      agentBindingChanged,
+      ed25519KeyChanged,
+      continuityVerified: true,
+      decision: 'unchanged',
+    };
   }
   if (!previousKey || !currentKey || agentBindingChanged) {
     return {
@@ -363,20 +525,31 @@ function evaluateIdentityContinuity(
     agentBindingChanged,
     ed25519KeyChanged,
     continuityVerified: Boolean(receipt),
-    decision: receipt?.kind === 'explicit-revocation' ? 'explicit-revocation' : receipt ? 'signed-continuity' : 'missing-continuity',
+    decision:
+      receipt?.kind === 'explicit-revocation'
+        ? 'explicit-revocation'
+        : receipt
+          ? 'signed-continuity'
+          : 'missing-continuity',
     ...(receipt ? { receipt } : {}),
   };
 }
 
 function eventCursor(event: Erc8004OwnershipEvent): string {
-  return [event.txHash ?? 'unknown-tx', event.blockNumber ?? 'unknown-block', event.logIndex ?? 'unknown-log'].join(':');
+  return [
+    event.txHash ?? 'unknown-tx',
+    event.blockNumber ?? 'unknown-block',
+    event.logIndex ?? 'unknown-log',
+  ].join(':');
 }
 
 function sortOwnershipEvents(events: Erc8004OwnershipEvent[]): Erc8004OwnershipEvent[] {
   return [...events].sort((a, b) => {
-    const blockDelta = (a.blockNumber ?? Number.MAX_SAFE_INTEGER) - (b.blockNumber ?? Number.MAX_SAFE_INTEGER);
+    const blockDelta =
+      (a.blockNumber ?? Number.MAX_SAFE_INTEGER) - (b.blockNumber ?? Number.MAX_SAFE_INTEGER);
     if (blockDelta !== 0) return blockDelta;
-    const logDelta = (a.logIndex ?? Number.MAX_SAFE_INTEGER) - (b.logIndex ?? Number.MAX_SAFE_INTEGER);
+    const logDelta =
+      (a.logIndex ?? Number.MAX_SAFE_INTEGER) - (b.logIndex ?? Number.MAX_SAFE_INTEGER);
     if (logDelta !== 0) return logDelta;
     return eventCursor(a).localeCompare(eventCursor(b));
   });
@@ -398,17 +571,21 @@ function detectOwnershipContinuity(
   | undefined {
   const previousOwner = previousEntry.erc8004Identity?.owner ?? null;
   const currentOwner = currentEntry.erc8004Identity?.owner ?? null;
-  const agentId = currentEntry.erc8004Identity?.agentId ?? previousEntry.erc8004Identity?.agentId ?? null;
+  const agentId =
+    currentEntry.erc8004Identity?.agentId ?? previousEntry.erc8004Identity?.agentId ?? null;
   const events = sortOwnershipEvents(currentEntry.erc8004OwnershipEvents ?? []);
   const transferEvents = events.filter((event) => event.kind === 'transfer');
   const walletEvents = events.filter(
     (event) => event.kind === 'setAgentWallet' || event.kind === 'unsetAgentWallet'
   );
-  const ownershipTransferred = transferEvents.length > 0 || (!!previousOwner && !!currentOwner && previousOwner !== currentOwner);
+  const ownershipTransferred =
+    transferEvents.length > 0 ||
+    (!!previousOwner && !!currentOwner && previousOwner !== currentOwner);
 
   if (!ownershipTransferred && walletEvents.length === 0) return undefined;
 
-  const preTransferPaidEvidenceIsolated = ownershipTransferred && attributionEvidenceCount(previousEntry) > 0;
+  const preTransferPaidEvidenceIsolated =
+    ownershipTransferred && attributionEvidenceCount(previousEntry) > 0;
   const epochs: Erc8004OwnershipEpochEvidence[] = [
     {
       agentId,
@@ -416,7 +593,9 @@ function detectOwnershipContinuity(
       agentWallet: null,
       startEvent: null,
       endEvent: null,
-      paidOutcomeReceiptCount: preTransferPaidEvidenceIsolated ? attributionEvidenceCount(previousEntry) : 0,
+      paidOutcomeReceiptCount: preTransferPaidEvidenceIsolated
+        ? attributionEvidenceCount(previousEntry)
+        : 0,
       reputationWeight: preTransferPaidEvidenceIsolated
         ? 'pre-transfer-isolated'
         : 'reduced-until-reattestation',
@@ -460,7 +639,8 @@ function detectOwnershipContinuity(
 
   const currentEpoch = epochs.at(-1)!;
   const currentEpochPaymentWalletReattested = Boolean(currentEpoch.agentWallet);
-  const fullWeightAllowed = servicesReattested && (!ownershipTransferred || currentEpochPaymentWalletReattested);
+  const fullWeightAllowed =
+    servicesReattested && (!ownershipTransferred || currentEpochPaymentWalletReattested);
   currentEpoch.reputationWeight = fullWeightAllowed
     ? 'full-after-reattestation'
     : 'reduced-until-reattestation';
@@ -490,35 +670,55 @@ function detectAgentUriLineage(
       const currentAgentURI = currentEntry.agentURI ?? null;
       const previousRegistrationSha256 = previousEntry.registrationSha256 ?? null;
       const currentRegistrationSha256 = currentEntry.registrationSha256 ?? null;
-      if (!previousAgentURI && !currentAgentURI && !previousRegistrationSha256 && !currentRegistrationSha256) return [];
+      if (
+        !previousAgentURI &&
+        !currentAgentURI &&
+        !previousRegistrationSha256 &&
+        !currentRegistrationSha256
+      )
+        return [];
       const uriChanged = previousAgentURI !== currentAgentURI;
       const hashChanged = previousRegistrationSha256 !== currentRegistrationSha256;
       const servicesReattested = currentEntry.a2aMcpServiceReattested === true;
       const identityContinuity = evaluateIdentityContinuity(previousEntry, currentEntry);
       const identityAllowsRetention =
-        !identityContinuity || !identityContinuity.ed25519KeyChanged || identityContinuity.continuityVerified;
-      const ownershipEvidence = detectOwnershipContinuity(previousEntry, currentEntry, servicesReattested);
+        !identityContinuity ||
+        !identityContinuity.ed25519KeyChanged ||
+        identityContinuity.continuityVerified;
+      const ownershipEvidence = detectOwnershipContinuity(
+        previousEntry,
+        currentEntry,
+        servicesReattested
+      );
       if (!uriChanged && !hashChanged && !ownershipEvidence) return [];
       const transition: Erc8004AgentUriLineageEvidence['transition'] = uriChanged
         ? 'agent-uri-changed'
         : hashChanged
           ? 'registration-hash-changed'
           : 'ownership-epoch-changed';
-      return [{
-        server,
-        previousAgentURI,
-        currentAgentURI,
-        previousRegistrationSha256,
-        currentRegistrationSha256,
-        servicesReattested,
-        reputationWeightRetained:
-          servicesReattested && identityAllowsRetention && (ownershipEvidence?.ownershipContinuity.fullWeightAllowed ?? true),
-        ...(previousEntry.erc8004Identity ? { previousIdentity: previousEntry.erc8004Identity } : {}),
-        ...(currentEntry.erc8004Identity ? { currentIdentity: currentEntry.erc8004Identity } : {}),
-        ...(identityContinuity ? { identityContinuity } : {}),
-        ...(ownershipEvidence ? ownershipEvidence : {}),
-        transition,
-      }];
+      return [
+        {
+          server,
+          previousAgentURI,
+          currentAgentURI,
+          previousRegistrationSha256,
+          currentRegistrationSha256,
+          servicesReattested,
+          reputationWeightRetained:
+            servicesReattested &&
+            identityAllowsRetention &&
+            (ownershipEvidence?.ownershipContinuity.fullWeightAllowed ?? true),
+          ...(previousEntry.erc8004Identity
+            ? { previousIdentity: previousEntry.erc8004Identity }
+            : {}),
+          ...(currentEntry.erc8004Identity
+            ? { currentIdentity: currentEntry.erc8004Identity }
+            : {}),
+          ...(identityContinuity ? { identityContinuity } : {}),
+          ...(ownershipEvidence ? ownershipEvidence : {}),
+          transition,
+        },
+      ];
     })
     .sort((a, b) => a.server.localeCompare(b.server));
 }
@@ -545,7 +745,8 @@ export function diffMcpSweepReports(
     .filter((entry) => previousByServer.has(entry.server))
     .map((entry) => {
       const previousEntry = previousByServer.get(entry.server)!;
-      const delta = isScored(entry) && isScored(previousEntry) ? entry.score - previousEntry.score : null;
+      const delta =
+        isScored(entry) && isScored(previousEntry) ? entry.score - previousEntry.score : null;
       const semanticVersionReceipt = semanticVersionReceiptByServer.get(entry.server);
       return {
         server: entry.server,
@@ -587,7 +788,9 @@ export function writeMcpReportFiles(
   paths: McpReportFilePaths,
   options: McpReportFileOptions = {}
 ): McpReportFilePaths {
-  const diff = options.previousReport ? diffMcpSweepReports(report, options.previousReport) : undefined;
+  const diff = options.previousReport
+    ? diffMcpSweepReports(report, options.previousReport)
+    : undefined;
   const hostedUrls = buildHostedUrls(paths, options.publishedBaseUrl);
   const renderedJson = renderJSON(report);
   const x402PaidAxReportReceipt = options.x402PaidReportOffer
@@ -599,7 +802,10 @@ export function writeMcpReportFiles(
       })
     : undefined;
   writeTextFile(paths.json, renderedJson);
-  writeTextFile(paths.markdown, renderMcpLeaderboard(report, { diff, hostedUrls, x402PaidAxReportReceipt }));
+  writeTextFile(
+    paths.markdown,
+    renderMcpLeaderboard(report, { diff, hostedUrls, x402PaidAxReportReceipt })
+  );
   if (paths.manifest) {
     const manifest: McpReportArtifactManifest = {
       generatedAt: new Date().toISOString(),

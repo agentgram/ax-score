@@ -3,10 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import {
-  diffMcpSweepReports,
-  writeMcpReportFiles,
-} from './mcp-files.js';
+import { diffMcpSweepReports, writeMcpReportFiles } from './mcp-files.js';
 import type { McpReportArtifactManifest, McpSweepReport } from '../types.js';
 
 function stableJson(value: unknown): string {
@@ -28,8 +25,18 @@ function makeContinuityFixture() {
     .export({ type: 'spki', format: 'der' })
     .toString('base64');
   const payload = {
-    previous: { agentId: '7', owner: '0xowner', publicKeyBase64: previousPublicKeyBase64, version: 1 },
-    current: { agentId: '7', owner: '0xowner', publicKeyBase64: currentPublicKeyBase64, version: 2 },
+    previous: {
+      agentId: '7',
+      owner: '0xowner',
+      publicKeyBase64: previousPublicKeyBase64,
+      version: 1,
+    },
+    current: {
+      agentId: '7',
+      owner: '0xowner',
+      publicKeyBase64: currentPublicKeyBase64,
+      version: 2,
+    },
   };
   return {
     previousPublicKeyBase64,
@@ -40,7 +47,9 @@ function makeContinuityFixture() {
       kind: 'old-to-new-continuity' as const,
       payload,
       payloadSha256: createHash('sha256').update(stableJson(payload)).digest('hex'),
-      signatureBase64: sign(null, Buffer.from(stableJson(payload)), previous.privateKey).toString('base64'),
+      signatureBase64: sign(null, Buffer.from(stableJson(payload)), previous.privateKey).toString(
+        'base64'
+      ),
       signedAt: '2026-08-14T00:00:00.000Z',
     },
   };
@@ -139,9 +148,32 @@ describe('writeMcpReportFiles', () => {
           x402PaidReportOffer: {
             offerDescription: 'Paid AX Report for io.github.acme/todo-server',
             route: 'GET /reports/mcp-report.json',
+            scheme: 'exact',
+            network: 'base-sepolia',
+            verificationTopology: {
+              mode: 'named-facilitator',
+              facilitatorId: 'coinbase-x402',
+            },
+            settlementTopology: {
+              mode: 'named-facilitator',
+              facilitatorId: 'coinbase-x402',
+            },
             settlementReceipt: {
               facilitatorId: 'coinbase-x402',
+              scheme: 'exact',
               network: 'base-sepolia',
+              verify: {
+                mode: 'named-facilitator',
+                facilitatorId: 'coinbase-x402',
+                outcome: 'valid',
+                timestamp: '2026-07-13T00:00:01.000Z',
+              },
+              settle: {
+                mode: 'named-facilitator',
+                facilitatorId: 'coinbase-x402',
+                outcome: 'settled',
+                timestamp: '2026-07-13T00:00:05.000Z',
+              },
               verificationTimestamp: '2026-07-13T00:00:01.000Z',
               settlementTimestamp: '2026-07-13T00:00:05.000Z',
               outcome: 'settled',
@@ -162,9 +194,7 @@ describe('writeMcpReportFiles', () => {
       expect(markdown).toContain('https://ax-score.example/reports/mcp-report.md');
       expect(markdown).toContain('## Historical diff');
       expect(markdown).toContain('io.github.acme/todo-server: 88 → 93 (+5)');
-      expect(manifest.hostedUrls?.json).toBe(
-        'https://ax-score.example/reports/mcp-report.json'
-      );
+      expect(manifest.hostedUrls?.json).toBe('https://ax-score.example/reports/mcp-report.json');
       expect(manifest.hostedUrls?.manifest).toBe(
         'https://ax-score.example/reports/mcp-report-manifest.json'
       );
@@ -173,7 +203,10 @@ describe('writeMcpReportFiles', () => {
       expect(markdown).toContain('## x402 paid AX Report receipt');
       expect(markdown).toContain('GET /reports/mcp-report.json');
       expect(markdown).toContain('coinbase-x402');
+      expect(markdown).toContain('scheme: exact');
       expect(markdown).toContain('base-sepolia');
+      expect(markdown).toContain('/verify outcome: valid');
+      expect(markdown).toContain('/settle outcome: settled');
       expect(markdown).toContain('settled');
       expect(manifest.x402PaidAxReportReceipt).toMatchObject({
         signatureAlgorithm: 'ed25519',
@@ -186,7 +219,18 @@ describe('writeMcpReportFiles', () => {
             .digest('hex'),
           settlementProvenance: {
             facilitatorId: 'coinbase-x402',
+            scheme: 'exact',
             network: 'base-sepolia',
+            verificationTopology: {
+              mode: 'named-facilitator',
+              facilitatorId: 'coinbase-x402',
+              outcome: 'valid',
+            },
+            settlementTopology: {
+              mode: 'named-facilitator',
+              facilitatorId: 'coinbase-x402',
+              outcome: 'settled',
+            },
             verificationTimestamp: '2026-07-13T00:00:01.000Z',
             settlementTimestamp: '2026-07-13T00:00:05.000Z',
             outcome: 'settled',
@@ -199,7 +243,20 @@ describe('writeMcpReportFiles', () => {
           .update(
             stableJson({
               facilitatorId: 'coinbase-x402',
+              scheme: 'exact',
               network: 'base-sepolia',
+              verify: {
+                mode: 'named-facilitator',
+                facilitatorId: 'coinbase-x402',
+                outcome: 'valid',
+                timestamp: '2026-07-13T00:00:01.000Z',
+              },
+              settle: {
+                mode: 'named-facilitator',
+                facilitatorId: 'coinbase-x402',
+                outcome: 'settled',
+                timestamp: '2026-07-13T00:00:05.000Z',
+              },
               verificationTimestamp: '2026-07-13T00:00:01.000Z',
               settlementTimestamp: '2026-07-13T00:00:05.000Z',
               outcome: 'settled',
@@ -265,8 +322,11 @@ describe('writeMcpReportFiles', () => {
             x402PaidReportOffer: {
               offerDescription: 'Paid AX Report',
               route: 'GET /reports/mcp-report.json',
+              scheme: 'exact',
+              network: 'base-sepolia',
               settlementReceipt: {
                 facilitatorId: 'coinbase-x402',
+                scheme: 'exact',
                 network: 'base-sepolia',
                 verificationTimestamp: '2026-07-13T00:00:01.000Z',
                 settlementTimestamp: '2026-07-13T00:00:05.000Z',
@@ -277,6 +337,59 @@ describe('writeMcpReportFiles', () => {
           }
         )
       ).toThrow('changed across retries');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects x402 receipt generation when verification and settlement topology drift', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ax-score-mcp-report-'));
+
+    try {
+      expect(() =>
+        writeMcpReportFiles(
+          makeReport(),
+          {
+            json: join(dir, 'report.json'),
+            markdown: join(dir, 'report.md'),
+            manifest: join(dir, 'manifest.json'),
+          },
+          {
+            publishedBaseUrl: 'https://ax-score.example/reports',
+            x402PaidReportOffer: {
+              offerDescription: 'Paid AX Report',
+              route: 'GET /reports/mcp-report.json',
+              scheme: 'exact',
+              network: 'base-sepolia',
+              verificationTopology: {
+                mode: 'named-facilitator',
+                facilitatorId: 'coinbase-x402',
+              },
+              settlementTopology: {
+                mode: 'named-facilitator',
+                facilitatorId: 'coinbase-x402',
+              },
+              settlementReceipt: {
+                facilitatorId: 'coinbase-x402',
+                scheme: 'exact',
+                network: 'solana-devnet',
+                verify: {
+                  mode: 'named-facilitator',
+                  facilitatorId: 'coinbase-x402',
+                  outcome: 'valid',
+                  timestamp: '2026-07-13T00:00:01.000Z',
+                },
+                settle: {
+                  mode: 'local',
+                  outcome: 'settled',
+                  timestamp: '2026-07-13T00:00:05.000Z',
+                },
+                outcome: 'settled',
+              },
+            },
+          }
+        )
+      ).toThrow('x402 topology drift');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -307,7 +420,6 @@ describe('writeMcpReportFiles', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-
 });
 
 describe('diffMcpSweepReports', () => {
@@ -807,7 +919,6 @@ describe('diffMcpSweepReports', () => {
         'Registry version changed from 1.2.3 to 1.3.0 and canonical title/description/schema/remotes changed.',
     });
   });
-
 
   it('omits unchanged null scores while preserving transitions into and out of scored state', () => {
     const baseEntry = makeReport().entries[0]!;
