@@ -54,7 +54,9 @@ export function renderMcpReport(report: McpReport): string {
     )
   );
   lines.push('');
-  lines.push(chalk.gray(`  ${report.server}${report.serverVersion ? ` v${report.serverVersion}` : ''}`));
+  lines.push(
+    chalk.gray(`  ${report.server}${report.serverVersion ? ` v${report.serverVersion}` : ''}`)
+  );
   lines.push(chalk.gray(`  Registry: ${report.registryUrl}`));
   lines.push(chalk.gray(`  Scanned at ${new Date(report.timestamp).toLocaleString()}`));
   lines.push('');
@@ -155,8 +157,29 @@ export function renderMcpLeaderboard(
     lines.push(`- route: ${escapeMarkdown(receipt.payload.route)}`);
     lines.push(`- content digest: ${receipt.payload.contentDigestSha256}`);
     lines.push(`- settlement receipt digest: ${receipt.payload.settlementReceiptSha256}`);
-    lines.push(`- facilitator: ${escapeMarkdown(receipt.payload.settlementProvenance.facilitatorId)}`);
+    lines.push(
+      `- facilitator: ${escapeMarkdown(receipt.payload.settlementProvenance.facilitatorId)}`
+    );
+    lines.push(`- scheme: ${escapeMarkdown(receipt.payload.settlementProvenance.scheme)}`);
     lines.push(`- network: ${escapeMarkdown(receipt.payload.settlementProvenance.network)}`);
+    lines.push(
+      `- /verify topology: ${receipt.payload.settlementProvenance.verificationTopology.mode}` +
+        (receipt.payload.settlementProvenance.verificationTopology.facilitatorId
+          ? ` (${escapeMarkdown(receipt.payload.settlementProvenance.verificationTopology.facilitatorId)})`
+          : '')
+    );
+    lines.push(
+      `- /verify outcome: ${escapeMarkdown(receipt.payload.settlementProvenance.verificationTopology.outcome)}`
+    );
+    lines.push(
+      `- /settle topology: ${receipt.payload.settlementProvenance.settlementTopology.mode}` +
+        (receipt.payload.settlementProvenance.settlementTopology.facilitatorId
+          ? ` (${escapeMarkdown(receipt.payload.settlementProvenance.settlementTopology.facilitatorId)})`
+          : '')
+    );
+    lines.push(
+      `- /settle outcome: ${escapeMarkdown(receipt.payload.settlementProvenance.settlementTopology.outcome)}`
+    );
     lines.push(`- verified at: ${receipt.payload.settlementProvenance.verificationTimestamp}`);
     lines.push(`- settled at: ${receipt.payload.settlementProvenance.settlementTimestamp}`);
     lines.push(`- final outcome: ${receipt.payload.settlementProvenance.outcome}`);
@@ -200,9 +223,7 @@ export function renderMcpLeaderboard(
     }
     lines.push('');
   }
-  lines.push(
-    `| # | Server | Score | ${categoryColumns.map((c) => c.title).join(' | ')} |`
-  );
+  lines.push(`| # | Server | Score | ${categoryColumns.map((c) => c.title).join(' | ')} |`);
   lines.push(`|--:|:-------|------:|${categoryColumns.map(() => '----:').join('|')}|`);
 
   let rank = 0;

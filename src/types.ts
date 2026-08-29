@@ -658,6 +658,14 @@ export interface McpX402PaidAxReportOffer {
   offerDescription: string;
   /** Paid route whose successful retry delivers the AX Report artifact. */
   route: string;
+  /** x402 payment scheme selected during authorization, e.g. exact. */
+  scheme?: string;
+  /** x402 payment network selected during authorization. */
+  network?: string;
+  /** Verification topology selected during authorization. */
+  verificationTopology?: McpX402RouteTopology;
+  /** Settlement topology selected during authorization. */
+  settlementTopology?: McpX402RouteTopology;
   /** Settlement receipt returned by the x402 facilitator or merchant ledger. */
   settlementReceipt: unknown;
   /** Previously observed settlement provenance digest; retries must not drift from it. */
@@ -666,11 +674,31 @@ export interface McpX402PaidAxReportOffer {
   deliveryUrl?: string;
 }
 
+export type McpX402RouteTopologyMode = 'local' | 'named-facilitator';
+
+export interface McpX402RouteTopology {
+  /** Whether the route verifies/settles locally or through a named facilitator. */
+  mode: McpX402RouteTopologyMode;
+  /** Required when mode is named-facilitator. */
+  facilitatorId?: string;
+}
+
+export interface McpX402ObservedRouteTopology extends McpX402RouteTopology {
+  /** /verify or /settle result bound into the paid delivery receipt. */
+  outcome: string;
+}
+
 export interface McpX402SettlementProvenance {
   /** Stable facilitator/provider identity that verified and settled the payment. */
   facilitatorId: string;
+  /** Payment scheme selected and settled for this paid route. */
+  scheme: string;
   /** Payment network used by the facilitator. */
   network: string;
+  /** Verification topology and /verify outcome used before paid report delivery. */
+  verificationTopology: McpX402ObservedRouteTopology;
+  /** Settlement topology and /settle outcome used before paid report delivery. */
+  settlementTopology: McpX402ObservedRouteTopology;
   /** ISO timestamp when the facilitator verified payment validity. */
   verificationTimestamp: string;
   /** ISO timestamp when final settlement was observed. */
